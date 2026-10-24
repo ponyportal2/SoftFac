@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 import { access } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { nextPollDelay } from "./backoff.js";
 import { checkPullRequest } from "./check-pr.js";
 import { ProcessRunner, type CommandRunner } from "./command.js";
 import { loadConfigFile } from "./config-file.js";
 import { issuePolicy, type FactoryConfig } from "./config.js";
 import { initRepo } from "./init.js";
 import { labelsForConfig, syncLabels } from "./labels.js";
+import { acquireLock, type LockHandle } from "./lock.js";
 import { parseRepoSlug } from "./repo-url.js";
 import { createRuntime } from "./runtime.js";
 import { FileStateStore } from "./state.js";
@@ -25,7 +27,7 @@ Usage:
   softfac labels
   softfac status
   softfac run [--once]
-  softfac check-pr <number>
+  softfac check-pr <number> [--repair]
 
 Commands:
   init       Create .softfac config, prompts, and review directories.
@@ -33,7 +35,7 @@ Commands:
   labels     Create or update the required GitHub labels.
   status     Show recorded issues, sessions, and architecture decisions.
   run        Process ready issues continuously (or once with --once).
-  check-pr   Enforce the PR policy; used by the GitHub Action.
+  check-pr   Enforce the PR policy; --repair reopens an issue closed by a bad PR.
 `;
 
 function option(args: readonly string[], name: string): string | undefined {
@@ -233,6 +235,10 @@ function printResult(result: ProcessResult): void {
   );
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function runCommand(
   args: readonly string[],
   config: FactoryConfig,
@@ -240,12 +246,39 @@ async function runCommand(
 ): Promise<number> {
   const once = hasFlag(args, "--once");
   const runtime = createRuntime(config, cwd);
+  const lockPath = join(cwd, dirname(config.statePath), "run.lock");
+
+  let lock: LockHandle;
+  try {
+    lock = await acquireLock(lockPath);
+  } catch (error) {
+    await runtime.close();
+    console.error(
+      `[softfac] ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return 1;
+  }
+
   let failed = false;
+  let stopping = false;
+  let consecutiveFailures = 0;
+  const stop = (signal: string): void => {
+    if (stopping) {
+      return;
+    }
+    stopping = true;
+    console.log(`[softfac] ${signal} received; stopping after this cycle`);
+  };
+  const onSigint = (): void => stop("SIGINT");
+  const onSigterm = (): void => stop("SIGTERM");
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
 
   try {
     do {
       try {
         const results = await runtime.factory.runOnce();
+        consecutiveFailures = 0;
         if (results.length === 0) {
           console.log("[softfac] no ready issues");
         }
@@ -259,19 +292,24 @@ async function runCommand(
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[softfac] run failed: ${message}`);
         failed = true;
+        consecutiveFailures += 1;
         if (once) {
           break;
         }
       }
 
-      if (!once) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.max(config.pollIntervalMs, 1000)),
-        );
+      if (!once && !stopping) {
+        await sleep(nextPollDelay(consecutiveFailures, config.pollIntervalMs));
       }
-    } while (!once);
+    } while (!once && !stopping);
   } finally {
-    await runtime.close();
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
+    try {
+      await runtime.close();
+    } finally {
+      await lock.release();
+    }
   }
 
   return failed ? 1 : 0;
@@ -303,7 +341,13 @@ async function checkPrCommand(
       prNumber,
       policy: issuePolicy(config),
       runner,
+      repair: hasFlag(args, "--repair"),
     });
+    if (result.reopened) {
+      console.log(
+        `Reopened issue #${result.issueNumber}: the PR does not satisfy the policy.`,
+      );
+    }
     if (result.ok) {
       console.log(
         `Policy passed for issue #${result.issueNumber} ` +

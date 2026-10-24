@@ -251,6 +251,7 @@ export class SandcastleAgentRunner implements AgentRunner {
         TO_SHA: input.toSha,
         COMMITS: input.commits,
         DIFF: input.diff,
+        REPOSITORY_CONTEXT: input.repositoryContext,
         PRIOR_DECISIONS: formatArchitectureHistory(input.priorDecisions),
       },
       maxIterations: 1,

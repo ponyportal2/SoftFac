@@ -34,6 +34,7 @@ function tracker(runner: FakeRunner): GitHubTracker {
       running: "softfac:running",
       blocked: "softfac:blocked",
     },
+    policy: { bugLabels: ["bug"], substantialLabels: ["feature"] },
     runner,
   });
 }
@@ -205,10 +206,19 @@ test("reuses an open PR for the branch instead of creating another", async () =>
     number: 55,
     url: "https://github.com/acme/widget/pull/55",
   });
-  assert.equal(runner.calls.length, 1);
+  assert.equal(runner.calls.length, 2);
   assert.deepEqual(runner.calls[0]!.args.slice(0, 2), ["pr", "list"]);
   assert.equal(runner.calls[0]!.args.includes("--head"), true);
   assert.equal(runner.calls[0]!.args.includes("softfac/7"), true);
+  assert.deepEqual(runner.calls[1]!.args.slice(0, 5), [
+    "pr",
+    "edit",
+    "55",
+    "--repo",
+    "acme/widget",
+  ]);
+  assert.equal(runner.calls[1]!.args.includes("fix: Fix it"), true);
+  assert.equal(runner.calls[1]!.args.includes("Fixes #7"), true);
 });
 
 test("rejects an invalid PR list payload", async () => {
@@ -225,6 +235,51 @@ test("rejects an invalid PR list payload", async () => {
       }),
     /invalid payload/i,
   );
+});
+
+test("creates a follow-up issue and parses its number", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push({
+    stdout: "https://github.com/acme/widget/issues/88\n",
+    stderr: "",
+    exitCode: 0,
+  });
+
+  const created = await tracker(runner).createIssue({
+    title: "Split the parser",
+    body: "Architecture follow-up.",
+    labels: ["softfac:follow-up"],
+  });
+
+  assert.equal(created.number, 88);
+  assert.deepEqual(created.labels, ["softfac:follow-up"]);
+  assert.deepEqual(runner.calls[0]!.args.slice(0, 2), ["issue", "create"]);
+  assert.equal(runner.calls[0]!.args.includes("softfac:follow-up"), true);
+});
+
+test("delegates the merge policy to the same check CI runs", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    {
+      stdout: JSON.stringify({
+        body: "Fixes #7\n\n- [x] Regression test added and failing before the fix.",
+        labels: [{ name: "bug" }],
+        reviews: [],
+      }),
+      stderr: "",
+      exitCode: 0,
+    },
+    {
+      stdout: JSON.stringify({ labels: [{ name: "bug" }], state: "OPEN" }),
+      stderr: "",
+      exitCode: 0,
+    },
+  );
+
+  const result = await tracker(runner).pullRequestPolicy(55);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(runner.calls[0]!.args.slice(0, 2), ["pr", "view"]);
 });
 
 test("merging uses squash and deletes the branch", async () => {

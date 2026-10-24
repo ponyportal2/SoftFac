@@ -1,14 +1,17 @@
 import {
   architectureReviewPath,
   decisionLabel,
+  newFollowUps,
   shouldRunArchitectureReview,
   truncateDiff,
   type ArchitectureVerdict,
 } from "./architecture.js";
+import { buildArchitectureContext } from "./architecture-context.js";
 import { issuePolicy, type FactoryConfig } from "./config.js";
 import {
   classifyIssue,
   type IssueKind,
+  type PolicyResult,
 } from "./policy.js";
 import { buildPullRequestBody } from "./pr.js";
 import type {
@@ -23,7 +26,11 @@ import type {
   ReviewResult,
   StateStore,
 } from "./ports.js";
-import { rememberSession, resolveSession } from "./sessions.js";
+import {
+  rememberSession,
+  resolveSession,
+  reviewerArea,
+} from "./sessions.js";
 import {
   rememberArchitectureDecision,
   type FactoryState,
@@ -210,6 +217,7 @@ export class Factory {
     this.#logger?.info(`issue #${issue.number} (${kind}) on ${branch}`);
     await this.#tracker.claim(issue);
     await this.#setIssue(issue, kind, branch, "running");
+    const area = reviewerArea(issue.labels, issuePolicy(this.#config));
 
     let implementerSession = await this.#session("implementer", issue.number);
     let implementation = await this.#agents.implement(
@@ -227,11 +235,11 @@ export class Factory {
     }
 
     await this.#setIssue(issue, kind, branch, "reviewing");
-    let reviewerSession = await this.#session("reviewer", issue.number);
+    let reviewerSession = await this.#session("reviewer", issue.number, area);
     let review = await this.#agents.review(
       this.#reviewerInput(issue, branch, reviewerSession, implementation.sessionId),
     );
-    await this.#remember("reviewer", issue.number, review.sessionId);
+    await this.#remember("reviewer", issue.number, review.sessionId, area);
     reviewerSession = review.sessionId ?? reviewerSession;
 
     let totalRounds = 1;
@@ -285,7 +293,7 @@ export class Factory {
           implementation.sessionId,
         ),
       );
-      await this.#remember("reviewer", issue.number, review.sessionId);
+      await this.#remember("reviewer", issue.number, review.sessionId, area);
       reviewerSession = review.sessionId ?? reviewerSession;
     }
 
@@ -344,6 +352,42 @@ export class Factory {
     this.#logger?.info(`issue #${issue.number}: opened PR #${pr.number}`);
 
     if (kind === "bug" && this.#config.bugs.autoMerge) {
+      // The merge is a hard gate: run the same policy check that CI runs
+      // against the live PR. A prompt cannot be trusted to enforce it, and a
+      // merge cannot be undone by the policy check afterwards.
+      let policy: PolicyResult;
+      try {
+        policy = await this.#tracker.pullRequestPolicy(pr.number);
+      } catch (error) {
+        return this.#block(
+          issue,
+          kind,
+          branch,
+          `Refusing to auto-merge PR #${pr.number}: the policy check failed: ${errorMessage(error)}`,
+          {
+            reviewRounds: totalRounds,
+            architecture: gate.status,
+            prNumber: pr.number,
+          },
+        );
+      }
+      if (!policy.ok) {
+        const reasons = policy.violations
+          .map((violation) => `[${violation.code}] ${violation.message}`)
+          .join("\n");
+        return this.#block(
+          issue,
+          kind,
+          branch,
+          `Refusing to auto-merge PR #${pr.number}; the PR policy is not satisfied:\n${reasons}`,
+          {
+            reviewRounds: totalRounds,
+            architecture: gate.status,
+            prNumber: pr.number,
+          },
+        );
+      }
+
       await this.#tracker.mergePullRequest(pr.number);
       if (this.#config.bugs.autoClose) {
         try {
@@ -416,6 +460,10 @@ export class Factory {
       await this.#git.diff(branch, since),
       this.#config.architecture.maxDiffChars,
     );
+    const repositoryContext = await this.#repositoryContext(
+      branch,
+      await this.#git.changedFiles(branch, since),
+    );
     const result: ArchitectResult = await this.#agents.architect({
       issue,
       branch,
@@ -423,19 +471,30 @@ export class Factory {
       toSha,
       commits,
       diff,
+      repositoryContext,
       priorDecisions: state.architecture.decisions,
     });
+
+    const filed = await this.#fileFollowUps(
+      issue,
+      newFollowUps(result.verdict.followUps, state.architecture.decisions),
+      { fromSha: since, toSha },
+    );
 
     const path = architectureReviewPath({ date: this.#now(), sha: toSha });
     await this.#git.commitFile(
       branch,
       path,
-      this.#architectureReviewMarkdown(result.verdict, {
-        branch,
-        fromSha: since,
-        toSha,
-        commits,
-      }),
+      this.#architectureReviewMarkdown(
+        result.verdict,
+        {
+          branch,
+          fromSha: since,
+          toSha,
+          commits,
+        },
+        filed,
+      ),
       `arch: review ${toSha.slice(0, 7)}`,
     );
     await this.#tracker.unlabel(issue, [
@@ -469,6 +528,49 @@ export class Factory {
     };
   }
 
+  async #repositoryContext(
+    branch: string,
+    changedFiles: readonly string[],
+  ): Promise<string> {
+    try {
+      return buildArchitectureContext({
+        files: await this.#git.listFiles(branch),
+        changedFiles,
+      });
+    } catch (error) {
+      return `Repository context is unavailable: ${errorMessage(error)}`;
+    }
+  }
+
+  async #fileFollowUps(
+    issue: Issue,
+    followUps: readonly string[],
+    range: { readonly fromSha: string | null; readonly toSha: string },
+  ): Promise<{ readonly text: string; readonly number: number }[]> {
+    const filed: { text: string; number: number }[] = [];
+    for (const text of followUps) {
+      try {
+        const created = await this.#tracker.createIssue({
+          title: text,
+          body: [
+            `Architecture follow-up from the review of #${issue.number}.`,
+            "",
+            text,
+            "",
+            `Range: \`${range.fromSha ?? "initial"}..${range.toSha}\``,
+          ].join("\n"),
+          labels: [this.#config.labels.followUp],
+        });
+        filed.push({ text, number: created.number });
+      } catch (error) {
+        this.#logger?.warn(
+          `issue #${issue.number}: could not file the architecture follow-up "${text}": ${errorMessage(error)}`,
+        );
+      }
+    }
+    return filed;
+  }
+
   #architectureReviewMarkdown(
     verdict: ArchitectureVerdict,
     range: {
@@ -477,6 +579,7 @@ export class Factory {
       readonly toSha: string;
       readonly commits: number;
     },
+    filed: readonly { readonly text: string; readonly number: number }[] = [],
   ): string {
     const lines = [
       "# Architecture review",
@@ -493,7 +596,14 @@ export class Factory {
     if (verdict.followUps.length > 0) {
       lines.push("", "## Follow-ups");
       for (const followUp of verdict.followUps) {
-        lines.push(`- ${followUp}`);
+        const issueNumber = filed.find(
+          (entry) => entry.text === followUp.trim(),
+        )?.number;
+        lines.push(
+          issueNumber === undefined
+            ? `- ${followUp}`
+            : `- ${followUp} (filed as #${issueNumber})`,
+        );
       }
     }
 
@@ -583,20 +693,22 @@ export class Factory {
   async #session(
     role: "implementer" | "reviewer" | "architect",
     issueNumber: number,
+    area?: string,
   ): Promise<string | undefined> {
-    return resolveSession(await this.#state.read(), role, issueNumber);
+    return resolveSession(await this.#state.read(), role, issueNumber, area);
   }
 
   async #remember(
     role: "implementer" | "reviewer" | "architect",
     issueNumber: number,
     sessionId: string | undefined,
+    area?: string,
   ): Promise<void> {
     if (sessionId === undefined) {
       return;
     }
     await this.#state.update((state) => ({
-      ...rememberSession(state, role, issueNumber, sessionId),
+      ...rememberSession(state, role, issueNumber, sessionId, area),
       updatedAt: this.#now().toISOString(),
     }));
   }
@@ -609,6 +721,7 @@ export class Factory {
     meta: {
       readonly reviewRounds?: number;
       readonly architecture?: ArchitectureGateStatus;
+      readonly prNumber?: number;
     } = {},
   ): Promise<ProcessResult> {
     await this.#tracker.block(issue, reason);
@@ -622,6 +735,7 @@ export class Factory {
       branch,
       reviewRounds: meta.reviewRounds ?? 0,
       architecture: meta.architecture ?? "skipped",
+      ...(meta.prNumber === undefined ? {} : { prNumber: meta.prNumber }),
       reason,
     };
   }

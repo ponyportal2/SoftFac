@@ -63,8 +63,180 @@ test("a bug is implemented, reviewed, merged, and auto-closed", async () => {
   assert.equal(git.branches[0], "softfac/42");
   assert.deepEqual(git.pushes, ["softfac/42"]);
   assert.equal(state.state.sessions["implementer:42"], "impl-42");
-  assert.equal(state.state.sessions["reviewer"], "rev-1");
+  assert.equal(state.state.sessions["reviewer:bug"], "rev-1");
   assert.equal(state.state.issues["42"]!.status, "done");
+});
+
+test("refuses to merge a bug when the live PR fails the policy", async () => {
+  const target = issue(42, ["bug"]);
+  const { tracker, factory } = setup([target]);
+  tracker.policyResult = {
+    ok: false,
+    violations: [
+      {
+        code: "bug-missing-regression-test",
+        message: "Bug PRs must check the regression-test box.",
+      },
+    ],
+  };
+
+  const result = await factory.processIssue(target);
+
+  assert.equal(result.outcome, "blocked");
+  assert.equal(result.prNumber, 101);
+  assert.deepEqual(tracker.policyChecks, [101]);
+  assert.deepEqual(tracker.merges, []);
+  assert.equal(tracker.closes.length, 0);
+  assert.match(tracker.blocks[0]!.reason, /Refusing to auto-merge PR #101/);
+  assert.match(tracker.blocks[0]!.reason, /bug-missing-regression-test/);
+});
+
+test("does not merge when the policy check itself fails", async () => {
+  const target = issue(42, ["bug"]);
+  const { tracker, factory } = setup([target]);
+  tracker.policyError = new Error("gh pr view failed");
+
+  const result = await factory.processIssue(target);
+
+  assert.equal(result.outcome, "blocked");
+  assert.deepEqual(tracker.merges, []);
+  assert.match(tracker.blocks[0]!.reason, /policy check failed: gh pr view failed/);
+});
+
+test("gives the architect the repository context", async () => {
+  const target = issue(42, ["feature"]);
+  const { git, agents, factory } = setup([target]);
+  git.fileList = [
+    "src/factory.ts",
+    "tests/factory.test.ts",
+    "docs/adr/0001-ports.md",
+    "package.json",
+  ];
+  agents.architectResults = [
+    {
+      verdict: { decision: "approved", summary: "Fine.", followUps: [] },
+      stdout: "",
+    },
+  ];
+
+  await factory.processIssue(target);
+
+  const context = agents.architectCalls[0]!.repositoryContext;
+  assert.match(context, /Changed files \(2\)/);
+  assert.match(context, /Module inventory:[\s\S]*- src: 1 file/);
+  assert.match(context, /docs\/adr\/0001-ports\.md/);
+  assert.match(context, /package\.json/);
+});
+
+test("keeps reviewer sessions per issue area", async () => {
+  const bug = issue(42, ["bug"]);
+  const feature = issue(43, ["feature"]);
+  const { agents, state, factory } = setup([bug, feature]);
+  agents.reviewResults = [
+    {
+      verdict: "approved",
+      summary: "Bug is fixed.",
+      findings: [],
+      sessionId: "rev-bug",
+      commits: 0,
+    },
+    {
+      verdict: "approved",
+      summary: "Feature is fine.",
+      findings: [],
+      sessionId: "rev-feature",
+      commits: 0,
+    },
+  ];
+
+  await factory.processIssue(bug);
+  await factory.processIssue(feature);
+
+  assert.equal(state.state.sessions["reviewer:bug"], "rev-bug");
+  assert.equal(state.state.sessions["reviewer:feature"], "rev-feature");
+  assert.equal(state.state.sessions["reviewer"], undefined);
+});
+
+test("files new architecture follow-ups as issues", async () => {
+  const target = issue(42, ["feature"]);
+  const { tracker, git, agents, factory } = setup([target]);
+  agents.architectResults = [
+    {
+      verdict: {
+        decision: "approved",
+        summary: "Boundaries hold.",
+        followUps: ["Split the parser", "Add an ADR for the boundary"],
+      },
+      stdout: "",
+    },
+  ];
+
+  const result = await factory.processIssue(target);
+
+  assert.equal(result.architecture, "approved");
+  assert.equal(tracker.createdIssues.length, 2);
+  assert.equal(tracker.createdIssues[0]!.title, "Split the parser");
+  assert.deepEqual(tracker.createdIssues[0]!.labels, ["softfac:follow-up"]);
+  assert.match(tracker.createdIssues[0]!.body, /review of #42/);
+  assert.match(git.files[0]!.content, /Split the parser \(filed as #900\)/);
+});
+
+test("does not re-file a follow-up raised by an earlier review", async () => {
+  const target = issue(42, ["feature"]);
+  const { tracker, agents, state, factory } = setup([target]);
+  const prior: ArchitectureDecisionRecord = {
+    branch: "softfac/1",
+    fromSha: null,
+    toSha: "abc1234",
+    anchorSha: "base1234",
+    decision: "approved",
+    summary: "Prior review.",
+    followUps: ["Split the parser"],
+    reviewedAt: "2026-10-20T10:00:00.000Z",
+  };
+  state.state = {
+    ...state.state,
+    architecture: {
+      ...state.state.architecture,
+      decisions: [prior],
+    },
+  };
+  agents.architectResults = [
+    {
+      verdict: {
+        decision: "approved",
+        summary: "Boundaries hold.",
+        followUps: ["Split the parser", "Document the API"],
+      },
+      stdout: "",
+    },
+  ];
+
+  await factory.processIssue(target);
+
+  assert.equal(tracker.createdIssues.length, 1);
+  assert.equal(tracker.createdIssues[0]!.title, "Document the API");
+});
+
+test("a failed follow-up issue does not block the pull request", async () => {
+  const target = issue(42, ["feature"]);
+  const { tracker, agents, factory } = setup([target]);
+  tracker.createIssueError = new Error("gh is down");
+  agents.architectResults = [
+    {
+      verdict: {
+        decision: "approved",
+        summary: "Boundaries hold.",
+        followUps: ["Split the parser"],
+      },
+      stdout: "",
+    },
+  ];
+
+  const result = await factory.processIssue(target);
+
+  assert.equal(result.outcome, "pull-request");
+  assert.equal(tracker.createdIssues.length, 0);
 });
 
 test("syncs the base branch before the implementer runs", async () => {
@@ -497,7 +669,7 @@ test("runOnce respects the issue limit and keeps one reviewer session", async ()
   assert.equal(agents.reviewCalls[1]!.sessionId, "rev-1");
   assert.equal(state.state.sessions["implementer:42"], "impl-42");
   assert.equal(state.state.sessions["implementer:43"], "impl-43");
-  assert.equal(state.state.sessions["reviewer"], "rev-1");
+  assert.equal(state.state.sessions["reviewer:bug"], "rev-1");
 });
 
 test("an agent failure blocks the issue and records it as failed", async () => {

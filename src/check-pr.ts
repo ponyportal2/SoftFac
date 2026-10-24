@@ -15,12 +15,15 @@ export interface CheckPullRequestOptions {
   readonly prNumber: number;
   readonly policy: PolicyOptions;
   readonly runner?: CommandRunner;
+  readonly repair?: boolean;
 }
 
 export interface CheckPullRequestResult extends PolicyResult {
   readonly issueNumber: number;
   readonly humanApprovals: number;
   readonly architectureApproved: boolean;
+  readonly issueState: "OPEN" | "CLOSED";
+  readonly reopened: boolean;
   readonly violations: PolicyViolation[];
 }
 
@@ -77,6 +80,16 @@ function isBot(login: string): boolean {
   return normalized.endsWith("[bot]") || normalized === "github-actions";
 }
 
+function parseIssueState(value: unknown): "OPEN" | "CLOSED" {
+  if (value === undefined) {
+    return "OPEN";
+  }
+  if (value === "OPEN" || value === "CLOSED") {
+    return value;
+  }
+  throw new Error("gh issue view returned an invalid state");
+}
+
 function humanApprovals(reviews: readonly unknown[]): number {
   const approvers = new Set<string>();
   for (const review of reviews) {
@@ -125,7 +138,7 @@ export async function checkPullRequest(
     "--repo",
     options.repo,
     "--json",
-    "labels",
+    "labels,state",
   ]);
   const issuePayload = parseJson(issueOutput.stdout, "gh issue view");
   if (!isRecord(issuePayload)) {
@@ -135,6 +148,7 @@ export async function checkPullRequest(
     issuePayload["labels"] ?? [],
     "gh issue view",
   );
+  const issueState = parseIssueState(issuePayload["state"]);
 
   const approvals = humanApprovals(pr.reviews);
   const architectureApproved = [...pr.labels, ...issueLabels].includes(
@@ -151,10 +165,24 @@ export async function checkPullRequest(
     policy: options.policy,
   });
 
+  const reopened =
+    options.repair === true && issueState === "CLOSED" && !result.ok;
+  if (reopened) {
+    await runner.run("gh", [
+      "issue",
+      "reopen",
+      String(issueNumber),
+      "--repo",
+      options.repo,
+    ]);
+  }
+
   return {
     ...result,
     issueNumber,
     humanApprovals: approvals,
     architectureApproved,
+    issueState,
+    reopened,
   };
 }

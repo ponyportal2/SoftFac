@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 
 import type { CommandRunner } from "./command.js";
-import type { FactoryConfig } from "./config.js";
+import { issuePolicy, type FactoryConfig } from "./config.js";
 import { Factory } from "./factory.js";
 import { GitRepo } from "./git.js";
 import { GitHubTracker } from "./github.js";
@@ -56,6 +56,7 @@ export function createRuntime(
       running: config.labels.running,
       blocked: config.labels.blocked,
     },
+    policy: issuePolicy(config),
     ...(options.runner === undefined ? {} : { runner: options.runner }),
   });
   const agents = new SandcastleAgentRunner({

@@ -138,6 +138,14 @@ export class GitRepo implements GitOps {
       .filter((line) => line !== "");
   }
 
+  async listFiles(branch: string): Promise<string[]> {
+    const output = await this.#git(["ls-tree", "-r", "--name-only", branch]);
+    return output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line !== "");
+  }
+
   async isAncestor(ancestorSha: string, branch: string): Promise<boolean> {
     try {
       await this.#git(["merge-base", "--is-ancestor", ancestorSha, branch]);

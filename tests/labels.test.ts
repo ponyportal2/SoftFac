@@ -46,6 +46,7 @@ test("includes factory, issue, and architecture labels", () => {
     "softfac:running",
     "softfac:blocked",
     "softfac:needs-human",
+    "softfac:follow-up",
     "bug",
     "feature",
     "architecture",

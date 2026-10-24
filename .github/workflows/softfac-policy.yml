@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
-  issues: read
+  issues: write
 
 concurrency:
   group: softfac-policy-${{ github.event.pull_request.number }}
@@ -30,4 +30,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: node dist/cli.js check-pr "${{ github.event.pull_request.number }}"
+        run: node dist/cli.js check-pr "${{ github.event.pull_request.number }}" --repair

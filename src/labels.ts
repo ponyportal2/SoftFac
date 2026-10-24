@@ -29,6 +29,11 @@ function factoryLabels(config: FactoryConfig): LabelDefinition[] {
       color: "5319E7",
       description: "A pull request is ready for human review",
     },
+    {
+      name: config.labels.followUp,
+      color: "C5DEF5",
+      description: "An architecture follow-up filed by SoftFac",
+    },
   ];
 }
 

@@ -12,6 +12,7 @@ export interface FactoryConfig {
     readonly running: string;
     readonly blocked: string;
     readonly needsHuman: string;
+    readonly followUp: string;
     readonly bug: string;
     readonly substantial: readonly string[];
   };
@@ -60,6 +61,7 @@ const DEFAULT_CONFIG: FactoryConfig = {
     running: "softfac:running",
     blocked: "softfac:blocked",
     needsHuman: "softfac:needs-human",
+    followUp: "softfac:follow-up",
     bug: "bug",
     substantial: ["feature", "architecture", "epic"],
   },
@@ -267,6 +269,7 @@ export function parseConfig(value: unknown): FactoryConfig {
       running: stringField(labels, "running", defaults.labels.running),
       blocked: stringField(labels, "blocked", defaults.labels.blocked),
       needsHuman: stringField(labels, "needsHuman", defaults.labels.needsHuman),
+      followUp: stringField(labels, "followUp", defaults.labels.followUp),
       bug: stringField(labels, "bug", defaults.labels.bug),
       substantial: stringArrayField(
         labels,

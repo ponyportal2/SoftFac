@@ -3,6 +3,7 @@ import type {
   BaseBranchSync,
   ArchitectInput,
   ArchitectResult,
+  CreateIssueInput,
   CreatePullRequestInput,
   GitOps,
   ImplementerInput,
@@ -16,6 +17,7 @@ import type {
   VerificationResult,
   VerifyInput,
 } from "../../src/ports.js";
+import type { PolicyResult } from "../../src/policy.js";
 import { createInitialState, type FactoryState } from "../../src/state.js";
 
 export class MemoryStateStore implements StateStore {
@@ -51,7 +53,13 @@ export class FakeTracker implements IssueTracker {
   readonly labels: { issue: Issue; labels: readonly string[] }[] = [];
   readonly unlabels: { issue: Issue; labels: readonly string[] }[] = [];
   readonly closes: { issue: Issue; comment?: string }[] = [];
+  readonly createdIssues: CreateIssueInput[] = [];
+  createIssueError: Error | undefined;
+  #nextIssue = 900;
   readonly pullRequests: CreatePullRequestInput[] = [];
+  readonly policyChecks: number[] = [];
+  policyResult: PolicyResult = { ok: true, violations: [] };
+  policyError: Error | undefined;
   readonly merges: number[] = [];
   closeError: Error | undefined;
   readonly #prBase: number;
@@ -97,12 +105,35 @@ export class FakeTracker implements IssueTracker {
     }
   }
 
+  async createIssue(input: CreateIssueInput): Promise<Issue> {
+    if (this.createIssueError !== undefined) {
+      throw this.createIssueError;
+    }
+    this.createdIssues.push(input);
+    const number = this.#nextIssue++;
+    return {
+      number,
+      title: input.title,
+      body: input.body,
+      url: `https://example.test/issues/${number}`,
+      labels: input.labels,
+    };
+  }
+
   async createPullRequest(input: CreatePullRequestInput): Promise<PullRequest> {
     this.pullRequests.push(input);
     return {
       number: this.#prBase + this.pullRequests.length,
       url: `https://example.test/pull/${this.#prBase + this.pullRequests.length}`,
     };
+  }
+
+  async pullRequestPolicy(prNumber: number): Promise<PolicyResult> {
+    this.policyChecks.push(prNumber);
+    if (this.policyError !== undefined) {
+      throw this.policyError;
+    }
+    return this.policyResult;
   }
 
   async mergePullRequest(prNumber: number): Promise<void> {
@@ -124,6 +155,8 @@ export class FakeGit implements GitOps {
   diffText = "diff --git a/file b/file";
   changedPaths: string[] = ["src/file.ts", "tests/file.test.ts"];
   changedPathRounds: string[][] = [];
+  fileList: string[] = [];
+  readonly listFilesCalls: string[] = [];
   readonly countCalls: { branch: string; sinceSha: string | null }[] = [];
   readonly branches: string[] = [];
   readonly pushes: string[] = [];
@@ -167,6 +200,11 @@ export class FakeGit implements GitOps {
     _sinceSha: string | null,
   ): Promise<string[]> {
     return this.changedPathRounds.shift() ?? [...this.changedPaths];
+  }
+
+  async listFiles(branch: string): Promise<string[]> {
+    this.listFilesCalls.push(branch);
+    return this.fileList;
   }
 
   async isAncestor(_ancestor: string, _descendant: string): Promise<boolean> {

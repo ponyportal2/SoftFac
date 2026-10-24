@@ -1,8 +1,11 @@
+import { checkPullRequest } from "./check-pr.js";
 import {
   ProcessRunner,
   type CommandRunner,
 } from "./command.js";
+import type { PolicyOptions, PolicyResult } from "./policy.js";
 import type {
+  CreateIssueInput,
   CreatePullRequestInput,
   Issue,
   IssueTracker,
@@ -17,6 +20,7 @@ export interface GitHubTrackerOptions {
     readonly running: string;
     readonly blocked: string;
   };
+  readonly policy: PolicyOptions;
   readonly runner?: CommandRunner;
 }
 
@@ -86,12 +90,14 @@ export class GitHubTracker implements IssueTracker {
   readonly #repo: string;
   readonly #baseBranch: string;
   readonly #labels: GitHubTrackerOptions["labels"];
+  readonly #policy: PolicyOptions;
   readonly #runner: CommandRunner;
 
   constructor(options: GitHubTrackerOptions) {
     this.#repo = options.repo;
     this.#baseBranch = options.baseBranch;
     this.#labels = options.labels;
+    this.#policy = options.policy;
     this.#runner = options.runner ?? new ProcessRunner();
   }
 
@@ -227,6 +233,34 @@ export class GitHubTracker implements IssueTracker {
     await this.#gh(args);
   }
 
+  async createIssue(input: CreateIssueInput): Promise<Issue> {
+    const args = [
+      "issue",
+      "create",
+      "--repo",
+      this.#repo,
+      "--title",
+      input.title,
+      "--body",
+      input.body,
+    ];
+    if (input.labels.length > 0) {
+      args.push("--label", input.labels.join(","));
+    }
+    const url = (await this.#gh(args)).trim();
+    const match = /(\d+)\s*$/.exec(url);
+    if (match?.[1] === undefined) {
+      throw new Error(`could not parse issue number from gh output: ${url}`);
+    }
+    return {
+      number: Number(match[1]),
+      title: input.title,
+      body: input.body,
+      url,
+      labels: input.labels,
+    };
+  }
+
   async createPullRequest(input: CreatePullRequestInput): Promise<PullRequest> {
     const existing = parsePullRequests(
       await this.#gh([
@@ -246,6 +280,19 @@ export class GitHubTracker implements IssueTracker {
     );
     const [open] = existing;
     if (open !== undefined) {
+      // The branch survived a crash, but its PR body still describes the
+      // previous review. Refresh it before returning the same PR.
+      await this.#gh([
+        "pr",
+        "edit",
+        String(open.number),
+        "--repo",
+        this.#repo,
+        "--title",
+        input.title,
+        "--body",
+        input.body,
+      ]);
       return open;
     }
 
@@ -269,6 +316,16 @@ export class GitHubTracker implements IssueTracker {
       throw new Error(`could not parse PR number from gh output: ${url}`);
     }
     return { number: Number(match[1]), url };
+  }
+
+  async pullRequestPolicy(prNumber: number): Promise<PolicyResult> {
+    const result = await checkPullRequest({
+      repo: this.#repo,
+      prNumber,
+      policy: this.#policy,
+      runner: this.#runner,
+    });
+    return { ok: result.ok, violations: result.violations };
   }
 
   async mergePullRequest(prNumber: number): Promise<void> {

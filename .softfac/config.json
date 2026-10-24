@@ -7,6 +7,7 @@
     "running": "softfac:running",
     "blocked": "softfac:blocked",
     "needsHuman": "softfac:needs-human",
+    "followUp": "softfac:follow-up",
     "bug": "bug",
     "substantial": [
       "feature",

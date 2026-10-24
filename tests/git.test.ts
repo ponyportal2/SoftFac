@@ -66,6 +66,21 @@ test("prepares a prefixed branch name", async () => {
   assert.equal(runner.calls.length, 0);
 });
 
+test("lists the tracked files on a branch", async () => {
+  const runner = new FakeRunner();
+  runner.stdout = "src/a.ts\nsrc/b.ts\npackage.json\n";
+
+  const files = await fakeRepo(runner).listFiles("softfac/7");
+
+  assert.deepEqual(files, ["src/a.ts", "src/b.ts", "package.json"]);
+  assert.deepEqual(runner.calls[0]!.args, [
+    "ls-tree",
+    "-r",
+    "--name-only",
+    "softfac/7",
+  ]);
+});
+
 test("counts commits from the base branch when no review SHA exists", async () => {
   const runner = new FakeRunner();
 

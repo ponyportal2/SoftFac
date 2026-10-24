@@ -4,7 +4,9 @@ import { test } from "node:test";
 import {
   architectureReviewPath,
   decisionLabel,
+  type ArchitectureDecisionRecord,
   formatArchitectureHistory,
+  newFollowUps,
   parseArchitectureVerdict,
   shouldRunArchitectureReview,
   truncateDiff,
@@ -161,4 +163,28 @@ test("formats prior decisions for the architect prompt", () => {
     text,
     /- 2026-10-23 approved on softfac\/11 \(initial\.\.ddddddd\): The boundary is coherent\./,
   );
+});
+
+test("keeps only follow-ups that were never raised before", () => {
+  const prior: ArchitectureDecisionRecord[] = [
+    {
+      branch: "softfac/1",
+      fromSha: null,
+      toSha: "abc1234",
+      anchorSha: "base1234",
+      decision: "approved",
+      summary: "Prior review.",
+      followUps: ["Split the parser", "Add a metric"],
+      reviewedAt: "2026-10-20T10:00:00.000Z",
+    },
+  ];
+
+  assert.deepEqual(
+    newFollowUps([" split the PARSER ", "Document the API", "document the api"], prior),
+    ["Document the API"],
+  );
+});
+
+test("keeps every follow-up when there is no history", () => {
+  assert.deepEqual(newFollowUps(["a", "b"], []), ["a", "b"]);
 });

@@ -6,12 +6,14 @@ Living plan. Rewrite freely as the design becomes clearer.
 
 A Pi-native software factory:
 - An **implementer** Pi session works one GitHub issue at a time on a branch.
-- A **reviewer** Pi session is continuous across issues and approves or requests changes.
+- A **reviewer** Pi session is continuous per issue area (bug, feature, ...) and approves or
+  requests changes.
 - An **architect** Pi session reviews the cumulative change on a cadence (every N commits)
   and always for substantial issues.
-- Bugs are auto-merged and auto-closed after review; substantial changes land in the
-  human approval pile (`softfac:needs-human`).
-- A GitHub Action enforces the PR policy (issue reference, regression test, approvals).
+- Bugs are auto-merged and auto-closed after review, but only when the live PR passes the same
+  policy check CI runs; a failed check blocks the issue instead of merging.
+- Substantial changes land in the human approval pile (`softfac:needs-human`).
+- A GitHub Action enforces the PR policy and reopens an issue closed by a non-compliant PR.
 
 ## Current state (2026-10-24)
 
@@ -37,36 +39,40 @@ A Pi-native software factory:
       to an empty list.
 - [x] The architecture diff is capped at `architecture.maxDiffChars` (default 60k) with an
       explicit truncation marker in the prompt.
-- [x] 176 tests, typecheck clean, `npm run build` clean.
+- [x] Merge gate: before a bug is auto-merged, the factory runs `check-pr`'s policy against the
+      live PR. A violation or a failed check blocks the issue and leaves the PR open.
+- [x] Architecture follow-ups become `softfac:follow-up` issues, deduplicated against the
+      retained decision history; a failed issue creation only logs a warning.
+- [x] The architect receives a repository context: changed files, module inventory, architecture
+      documents, dependency manifests, and coverage report paths, in addition to the capped diff.
+- [x] `check-pr --repair` reopens an issue that a non-compliant PR closed; the bundled Action
+      runs it with `issues: write`.
+- [x] Daemon hygiene: single-instance lock with stale-lock recovery, `SIGINT`/`SIGTERM` stop
+      after the current cycle, and exponential backoff with jitter on failed cycles.
+- [x] Reviewer sessions are keyed by issue area (`reviewer:bug`, `reviewer:feature`, ...)
+      instead of one immortal session for the whole repository.
+- [x] Reusing an open PR after a crash refreshes its title and body with `gh pr edit`.
+- [x] 205 tests, typecheck clean, `npm run build` clean.
 
 ## Next (pick up here)
 
-1. **Refresh the PR body when reusing an open PR.** After a crash the factory reuses the PR the
-   previous run opened, but its body still describes the older review. Add
-   `IssueTracker.updatePullRequest` (`gh pr edit`) and rewrite the title/body when
-   `createPullRequest` returns an existing PR.
-2. **React to human PR review comments.** Poll PR reviews for issues in the human approval pile,
+1. **React to human PR review comments.** Poll PR reviews for issues in the human approval pile,
    feed the latest human comment to the implementer as review feedback, re-review, and push.
    Needs a decision on the round cap and on who clears `softfac:needs-human`.
+2. **Triage architecture follow-ups.** They are filed with `softfac:follow-up` and are not
+   picked up automatically. Decide whether the factory should promote them to `softfac:ready`
+   after a human labels them, or whether the label itself is enough.
 
 ## Ideas / not scheduled
 
 - Cost/token accounting per issue from Pi's session metadata.
-- Allow the architect to file follow-up issues instead of only writing them into state.
+- Per-area reviewer prompts or round limits.
+- Show filed follow-up issue numbers in `softfac status`.
+- Let the architect read the contents of ADRs instead of only their paths.
 
 ## Known limitations
 
 - The factory does not react to human review comments on a PR; a blocked or human-review
   issue is resumed only by re-labelling it.
-- `maxRounds` counts extra rounds after the initial review, not total reviews.
-- The architect sees the diff of the reviewed range, not the full repository.
-- An `arch:changes-requested` verdict blocks the issue instead of looping back to the
-  implementer; the human decides the next step.
-- Verification runs once, after the architecture gate; a failure blocks the issue instead of
-  sending the failing output back to the implementer.
-- A fresh worktree has no dependencies, so `verification.commands` must install them first
-  (for example `npm ci`).
-- Sandcastle's `Output.object` is only available on the top-level `run()`, which creates its
-  own worktree. SoftFac reuses one worktree across the implementer, reviewer, and architect
-  (`Worktree.run`/`Sandbox.run` have no `output` option), so verdicts are still extracted
-  from XML blocks — now validated with zod instead of hand-rolled checks.
+- The architect sees the diff plus a repository outline, not the whole repository.
+- Reviewer sessions are reused per area, so a very long-lived session can still drift.

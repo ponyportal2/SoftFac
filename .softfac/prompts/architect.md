@@ -12,6 +12,9 @@ so it includes work merged since that review as well as this branch.
 Prior architecture decisions (newest first):
 {{PRIOR_DECISIONS}}
 
+Repository context (tracked files, architecture docs, dependency manifests, coverage):
+{{REPOSITORY_CONTEXT}}
+
 Keep new decisions consistent with the prior ones. If you reverse a prior
 decision, explain why in the summary.
 

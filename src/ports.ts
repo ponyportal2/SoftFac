@@ -2,6 +2,7 @@ import type {
   ArchitectureDecisionRecord,
   ArchitectureVerdict,
 } from "./architecture.js";
+import type { PolicyResult } from "./policy.js";
 import type { FactoryState } from "./state.js";
 
 export interface Issue {
@@ -52,6 +53,7 @@ export interface ArchitectInput {
   readonly toSha: string;
   readonly commits: number;
   readonly diff: string;
+  readonly repositoryContext: string;
   readonly priorDecisions: readonly ArchitectureDecisionRecord[];
 }
 
@@ -84,6 +86,12 @@ export interface AgentRunner {
   architect(input: ArchitectInput): Promise<ArchitectResult>;
 }
 
+export interface CreateIssueInput {
+  readonly title: string;
+  readonly body: string;
+  readonly labels: readonly string[];
+}
+
 export interface CreatePullRequestInput {
   readonly issue: Issue;
   readonly branch: string;
@@ -100,7 +108,9 @@ export interface IssueTracker {
   label(issue: Issue, labels: readonly string[]): Promise<void>;
   unlabel(issue: Issue, labels: readonly string[]): Promise<void>;
   close(issue: Issue, comment?: string): Promise<void>;
+  createIssue(input: CreateIssueInput): Promise<Issue>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequest>;
+  pullRequestPolicy(prNumber: number): Promise<PolicyResult>;
   mergePullRequest(prNumber: number): Promise<void>;
 }
 
@@ -116,6 +126,7 @@ export interface GitOps {
   headSha(branch: string): Promise<string>;
   diff(branch: string, sinceSha: string | null): Promise<string>;
   changedFiles(branch: string, sinceSha: string | null): Promise<string[]>;
+  listFiles(branch: string): Promise<string[]>;
   isAncestor(ancestorSha: string, branch: string): Promise<boolean>;
   push(branch: string): Promise<void>;
   commitFile(

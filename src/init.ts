@@ -76,6 +76,9 @@ so it includes work merged since that review as well as this branch.
 Prior architecture decisions (newest first):
 {{PRIOR_DECISIONS}}
 
+Repository context (tracked files, architecture docs, dependency manifests, coverage):
+{{REPOSITORY_CONTEXT}}
+
 Keep new decisions consistent with the prior ones. If you reverse a prior
 decision, explain why in the summary.
 
@@ -112,6 +115,7 @@ async function writeIfMissing(path: string, content: string): Promise<void> {
 const GITIGNORE_ENTRIES = [
   ".softfac/state.json",
   ".softfac/state.json.tmp",
+  ".softfac/run.lock",
   ".softfac/logs/",
   ".softfac/worktrees/",
   ".sandcastle/",

@@ -6,12 +6,12 @@ reviewed, policy-checked pull request using three long-lived agent roles:
 | Role | Session | Responsibility |
 | --- | --- | --- |
 | **Implementer** | One session per issue, resumed across review rounds | Writes the change on a branch and commits it |
-| **Reviewer** | One continuous session across all issues | Reviews the branch, approves or requests changes |
+| **Reviewer** | One continuous session per issue area (bug, feature, ...) | Reviews the branch, approves or requests changes |
 | **Architect** | Fresh session per review | Reviews the cumulative change for overarching design decisions |
 
-Bugs are merged and closed automatically once the review gates pass. Substantial changes stop at
-a human approval gate. Everything the agents do is committed to the branch, so the pull request
-is the audit trail.
+Bugs are merged and closed automatically once the review gates pass and the live PR satisfies
+the same policy check CI runs. Substantial changes stop at a human approval gate. Everything the
+agents do is committed to the branch, so the pull request is the audit trail.
 
 ## How a run works
 
@@ -40,7 +40,13 @@ architecture gate (every N commits, or always for substantial issues)
 verification commands (optional) -> fail? block the issue
    |
    v
-push -> open PR -> bug? merge + close : label softfac:needs-human
+push -> open PR
+   |
+   v
+policy check (same as CI) -- fail? block the issue, keep the PR open
+   |
+   v
+bug? merge + close : label softfac:needs-human
 ```
 
 Every step records its outcome in `.softfac/state.json`, so restarting the daemon resumes
@@ -55,7 +61,14 @@ sync is skipped with a warning and the run continues on the existing base.
 status is `running`, `reviewing`, or `architecture` — it swaps `softfac:running` back to
 `softfac:ready` and resets the record to `pending`. Sessions are persisted, so the resumed
 implementer/reviewer continue where they stopped. PR creation is idempotent: if the branch
-already has an open PR, that PR is reused instead of creating a duplicate.
+already has an open PR, that PR is reused and its title and body are refreshed, instead of
+creating a duplicate or leaving a stale review summary behind.
+
+**Daemon safety.** `softfac run` takes a single-instance lock at `.softfac/run.lock`; a second
+daemon exits with the owner's pid instead of racing the first one, and a lock left by a dead
+process is reclaimed. `SIGINT`/`SIGTERM` stop the loop after the current cycle, releasing the
+worktree, sandbox, and lock. A cycle that throws is retried with exponential backoff and up to
+20% jitter, capped at five minutes; a successful cycle resets the delay to `pollIntervalMs`.
 
 ## Requirements
 
@@ -82,9 +95,11 @@ prompts you have edited.
 
 ## Issue kinds and the PR policy
 
-An issue's labels decide how its pull request may land. The policy is enforced twice: the
-factory builds the PR body to match, and `softfac check-pr` (run by the bundled GitHub Action)
-rejects a PR that drifts.
+An issue's labels decide how its pull request may land. The policy is enforced three times:
+the factory builds the PR body to match, `softfac check-pr` (run by the bundled GitHub Action)
+rejects a PR that drifts, and the auto-merge path calls that same check against the live PR
+before merging. If the check fails, the factory blocks the issue and leaves the PR open — it
+never merges on the strength of the agent's own verdict.
 
 | Kind | Label | PR must | Lands |
 | --- | --- | --- | --- |
@@ -95,6 +110,11 @@ rejects a PR that drifts.
 The "human approval pile" is the `softfac:needs-human` label plus a comment linking the PR.
 The policy action re-runs on every push, label change, and review, so the required check turns
 green as soon as a human approves.
+
+The Action runs `check-pr --repair`. When a PR violates the policy and the issue it references
+is already closed (a closing keyword landed too early, or a bug PR was merged without its
+regression test), SoftFac reopens the issue before failing the check. A compliant PR that
+closed its bug issue is left alone.
 
 ## Architecture reviews
 
@@ -111,15 +131,21 @@ A review runs when either:
 
 Each review:
 
-1. Sends the diff, the commit count, and the previous decisions to the architect. The diff is
-   capped at `architecture.maxDiffChars`; a larger range is truncated with an explicit marker
-   so the prompt stays within a predictable size.
-2. Commits `docs/architecture/reviews/<date>-<sha>.md` to the branch.
-3. Applies `arch:approved` or `arch:changes-requested` to the issue.
-4. Appends the decision (summary and follow-ups) to state, keeping the last 10.
+1. Sends the diff, the commit count, the previous decisions, and a repository context to the
+   architect. The context lists the changed files, a module inventory, architecture documents
+   (ADRs and review notes), dependency manifests, and the paths of any coverage reports, so the architect can
+   judge the change against the repository it lands in. The diff is capped at
+   `architecture.maxDiffChars`; a larger range is truncated with an explicit marker so the
+   prompt stays within a predictable size.
+2. Files every follow-up that no earlier review raised as a `softfac:follow-up` issue. A failed
+   issue creation is logged and does not block the PR.
+3. Commits `docs/architecture/reviews/<date>-<sha>.md` to the branch, linking filed follow-ups.
+4. Applies `arch:approved` or `arch:changes-requested` to the issue.
+5. Appends the decision (summary and follow-ups) to state, keeping the last 10.
 
 Because decisions are persisted and fed back into the prompt, the architect stays consistent
-between reviews instead of re-litigating settled questions. An `arch:changes-requested` verdict
+between reviews instead of re-litigating settled questions, and a follow-up that is still in the
+retained decision history is not filed again. An `arch:changes-requested` verdict
 blocks the issue rather than looping back to the implementer — the human decides how to proceed.
 
 ## The TDD gate
@@ -170,6 +196,7 @@ silently ignored.
 | `labels.running` | `softfac:running` | Applied while an issue is being processed |
 | `labels.blocked` | `softfac:blocked` | Applied when the factory gives up |
 | `labels.needsHuman` | `softfac:needs-human` | The human approval pile |
+| `labels.followUp` | `softfac:follow-up` | Label on issues filed from architecture follow-ups |
 | `labels.bug` | `bug` | Classifies an issue as a bug |
 | `labels.substantial` | `feature`, `architecture`, `epic` | Classifies an issue as substantial |
 | `architecture.everyCommits` | `10` | Review cadence |
@@ -197,7 +224,8 @@ Prompts are plain Markdown with `{{PLACEHOLDER}}` substitution. Every role recei
 
 - **Implementer**: `REVIEW_FEEDBACK` — the previous review, or "None. This is the initial implementation."
 - **Reviewer**: `IMPLEMENTER_SESSION` — the implementer's session id.
-- **Architect**: `FROM_SHA`, `TO_SHA`, `COMMITS`, `DIFF`, `PRIOR_DECISIONS`.
+- **Architect**: `FROM_SHA`, `TO_SHA`, `COMMITS`, `DIFF`, `REPOSITORY_CONTEXT`,
+  `PRIOR_DECISIONS`.
 
 The reviewer must answer with a `<review>{"verdict":"approved"|"changes_requested",...}</review>`
 block and the architect with `<architecture>{...}</architecture>`. Both blocks are validated
@@ -207,17 +235,20 @@ invalid field fails the issue rather than guessing a verdict.
 ## GitHub Action
 
 `.github/workflows/softfac-policy.yml` builds the project and runs
-`node dist/cli.js check-pr <number>` on every PR event. It requires `GH_TOKEN` (the default
-token is enough) and fails the check with one line per violation. Keep this workflow in the
-repository you are automating, and make the check required in branch protection if you want the
-policy to be a hard gate.
+`node dist/cli.js check-pr <number> --repair` on every PR event. It requires `GH_TOKEN` (the
+default token is enough) and `issues: write` so it can reopen an issue closed by a
+non-compliant PR. It fails the check with one line per violation. Keep this workflow in the
+repository you are automating, and make the check required in branch protection — the factory's
+own merge gate covers bugs, but only branch protection stops a human from merging around the
+check.
 
 ## State and logs
 
 `.softfac/state.json` holds:
 
-- `sessions` — implementer sessions per issue, the continuous reviewer session, and no
-  architect session (the architect always starts fresh).
+- `sessions` — implementer sessions per issue, one continuous reviewer session per area
+  (`reviewer:bug`, `reviewer:feature`, ...), and no architect session (the architect always
+  starts fresh).
 - `issues` — status (`pending`, `running`, `reviewing`, `architecture`, `pull-request`,
   `blocked`, `done`, `failed`), branch, PR number, review rounds.
 - `architecture` — the review anchor and the last 10 decisions.
@@ -233,8 +264,8 @@ softfac init [--repo owner/repo]   Create config, prompts, and review directorie
 softfac doctor                     Check config, the git repo and origin, gh, pi, the sandbox
 softfac labels                     Create missing labels (never overwrites existing ones)
 softfac status                     Show recorded issues, sessions, and architecture decisions
-softfac run [--once]               Process ready issues continuously, or once
-softfac check-pr <number>          Enforce the PR policy (used by CI)
+softfac run [--once]               Process ready issues continuously, or once (single instance)
+softfac check-pr <number> [--repair]  Enforce the PR policy; --repair reopens a closed issue
 ```
 
 ## Development
@@ -254,6 +285,9 @@ depends only on those ports. Tests drive the factory through in-memory fakes in
 
 - Human review comments on a PR are not consumed; a blocked issue is resumed by re-labelling it.
 - `review.maxRounds` counts extra rounds after the initial review.
-- The architect sees the diff of the reviewed range, not the full repository.
+- The architect sees the diff of the reviewed range plus a repository outline, not the contents
+  of the whole repository.
+- Reviewer sessions are reused per area, not per repository; a very long-lived session can still
+  drift, which is why the review loop is capped.
 - Verification commands run once, after the architecture gate; a failure blocks the issue
   instead of sending the output back to the implementer.

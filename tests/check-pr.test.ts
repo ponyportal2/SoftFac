@@ -145,6 +145,87 @@ test("counts distinct human approvers only", async () => {
   assert.equal(result.humanApprovals, 1);
 });
 
+test("reopens an issue closed by a PR that violates the policy", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    prResponse({
+      number: 105,
+      body: "Fixes #42\n\nNo regression test declared.",
+      labels: [{ name: "bug" }],
+      reviews: [],
+    }),
+    prResponse({ labels: [{ name: "bug" }], state: "CLOSED" }),
+    { stdout: "", stderr: "", exitCode: 0 },
+  );
+
+  const result = await checkPullRequest({
+    repo: "acme/widget",
+    prNumber: 105,
+    policy,
+    runner,
+    repair: true,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.issueState, "CLOSED");
+  assert.equal(result.reopened, true);
+  assert.deepEqual(runner.calls[2]!.args, [
+    "issue",
+    "reopen",
+    "42",
+    "--repo",
+    "acme/widget",
+  ]);
+});
+
+test("does not reopen a closed issue when the policy passes", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    prResponse({
+      number: 106,
+      body: "Fixes #42\n\n- [x] Regression test added and failing before the fix.",
+      labels: [{ name: "bug" }],
+      reviews: [],
+    }),
+    prResponse({ labels: [{ name: "bug" }], state: "CLOSED" }),
+  );
+
+  const result = await checkPullRequest({
+    repo: "acme/widget",
+    prNumber: 106,
+    policy,
+    runner,
+    repair: true,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reopened, false);
+  assert.equal(runner.calls.length, 2);
+});
+
+test("leaves a closed issue alone without --repair", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    prResponse({
+      number: 107,
+      body: "Fixes #42\n\nNo regression test declared.",
+      labels: [{ name: "bug" }],
+      reviews: [],
+    }),
+    prResponse({ labels: [{ name: "bug" }], state: "CLOSED" }),
+  );
+
+  const result = await checkPullRequest({
+    repo: "acme/widget",
+    prNumber: 107,
+    policy,
+    runner,
+  });
+
+  assert.equal(result.reopened, false);
+  assert.equal(runner.calls.length, 2);
+});
+
 test("fails when the PR body has no issue reference", async () => {
   const runner = new FakeRunner();
   runner.responses.push(

@@ -93,6 +93,33 @@ export function decisionLabel(decision: ArchitectureDecision): string {
   return decision === "approved" ? "arch:approved" : "arch:changes-requested";
 }
 
+function normalizeFollowUp(text: string): string {
+  return text.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+export function newFollowUps(
+  followUps: readonly string[],
+  priorDecisions: readonly ArchitectureDecisionRecord[],
+): string[] {
+  const seen = new Set<string>();
+  for (const decision of priorDecisions) {
+    for (const followUp of decision.followUps) {
+      seen.add(normalizeFollowUp(followUp));
+    }
+  }
+
+  const fresh: string[] = [];
+  for (const followUp of followUps) {
+    const key = normalizeFollowUp(followUp);
+    if (key === "" || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    fresh.push(followUp.trim());
+  }
+  return fresh;
+}
+
 export function formatArchitectureHistory(
   decisions: readonly ArchitectureDecisionRecord[],
 ): string {
