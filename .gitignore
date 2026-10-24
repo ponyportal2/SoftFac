@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.softfac/state.json
+.softfac/state.json.tmp
+.softfac/logs/
+.softfac/worktrees/
+.env
+*.local
+.sandcastle/
+.codebuddy/

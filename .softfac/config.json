@@ -1,0 +1,56 @@
+{
+  "repo": "OWNER/REPO",
+  "baseBranch": "main",
+  "branchPrefix": "softfac/",
+  "labels": {
+    "ready": "softfac:ready",
+    "running": "softfac:running",
+    "blocked": "softfac:blocked",
+    "needsHuman": "softfac:needs-human",
+    "bug": "bug",
+    "substantial": [
+      "feature",
+      "architecture",
+      "epic"
+    ]
+  },
+  "architecture": {
+    "everyCommits": 10,
+    "requireForSubstantial": true,
+    "maxDiffChars": 60000
+  },
+  "review": {
+    "maxRounds": 2
+  },
+  "tdd": {
+    "testPatterns": [
+      "tests/**",
+      "test/**",
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/__tests__/**"
+    ]
+  },
+  "verification": {
+    "commands": []
+  },
+  "bugs": {
+    "autoClose": true,
+    "autoMerge": true
+  },
+  "maxIssuesPerRun": 1,
+  "pollIntervalMs": 60000,
+  "sandbox": "docker",
+  "agents": {
+    "implementerModel": "claude-sonnet-4-6",
+    "reviewerModel": "claude-sonnet-4-6",
+    "architectModel": "claude-opus-4-8"
+  },
+  "prompts": {
+    "implementer": ".softfac/prompts/implementer.md",
+    "reviewer": ".softfac/prompts/reviewer.md",
+    "architect": ".softfac/prompts/architect.md"
+  },
+  "statePath": ".softfac/state.json",
+  "logDir": ".softfac/logs"
+}

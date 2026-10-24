@@ -1,0 +1,263 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import type {
+  CommandResult,
+  CommandRunner,
+} from "../src/command.js";
+import { GitHubTracker } from "../src/github.js";
+import { issue } from "./support/fakes.js";
+
+class FakeRunner implements CommandRunner {
+  readonly calls: { command: string; args: readonly string[] }[] = [];
+  responses: CommandResult[] = [];
+
+  async run(
+    command: string,
+    args: readonly string[],
+  ): Promise<CommandResult> {
+    this.calls.push({ command, args: [...args] });
+    const response = this.responses.shift();
+    if (response === undefined) {
+      return { stdout: "", stderr: "", exitCode: 0 };
+    }
+    return response;
+  }
+}
+
+function tracker(runner: FakeRunner): GitHubTracker {
+  return new GitHubTracker({
+    repo: "acme/widget",
+    baseBranch: "main",
+    labels: {
+      ready: "softfac:ready",
+      running: "softfac:running",
+      blocked: "softfac:blocked",
+    },
+    runner,
+  });
+}
+
+test("lists only ready issues and normalizes labels", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push({
+    stdout: JSON.stringify([
+      {
+        number: 7,
+        title: "Fix it",
+        body: "body",
+        url: "https://example.test/issues/7",
+        labels: [{ name: "bug" }, { name: "p1" }],
+      },
+    ]),
+    stderr: "",
+    exitCode: 0,
+  });
+
+  const issues = await tracker(runner).listReady();
+
+  assert.deepEqual(issues, [
+    {
+      number: 7,
+      title: "Fix it",
+      body: "body",
+      url: "https://example.test/issues/7",
+      labels: ["bug", "p1"],
+    },
+  ]);
+  const call = runner.calls[0]!;
+  assert.equal(call.command, "gh");
+  assert.deepEqual(call.args.slice(0, 6), [
+    "issue",
+    "list",
+    "--repo",
+    "acme/widget",
+    "--state",
+    "open",
+  ]);
+  assert.equal(call.args.includes("softfac:ready"), true);
+  assert.equal(call.args.includes("--json"), true);
+});
+
+test("claiming swaps the ready label for the running label", async () => {
+  const runner = new FakeRunner();
+
+  await tracker(runner).claim(issue(7));
+
+  assert.deepEqual(runner.calls[0]!.args, [
+    "issue",
+    "edit",
+    "7",
+    "--repo",
+    "acme/widget",
+    "--add-label",
+    "softfac:running",
+    "--remove-label",
+    "softfac:ready",
+  ]);
+});
+
+test("blocking comments and swaps running for blocked", async () => {
+  const runner = new FakeRunner();
+
+  await tracker(runner).block(issue(7), "needs a human");
+
+  assert.equal(runner.calls.length, 2);
+  assert.deepEqual(runner.calls[0]!.args.slice(0, 3), [
+    "issue",
+    "comment",
+    "7",
+  ]);
+  assert.equal(runner.calls[0]!.args.at(-1), "needs a human");
+  assert.deepEqual(runner.calls[1]!.args, [
+    "issue",
+    "edit",
+    "7",
+    "--repo",
+    "acme/widget",
+    "--add-label",
+    "softfac:blocked",
+    "--remove-label",
+    "softfac:running",
+  ]);
+});
+
+test("labels and unlabels issues", async () => {
+  const runner = new FakeRunner();
+  const gh = tracker(runner);
+
+  await gh.label(issue(7), ["a", "b"]);
+  await gh.unlabel(issue(7), ["c"]);
+
+  assert.deepEqual(runner.calls[0]!.args.slice(-2), [
+    "--add-label",
+    "a,b",
+  ]);
+  assert.deepEqual(runner.calls[1]!.args.slice(-2), [
+    "--remove-label",
+    "c",
+  ]);
+});
+
+test("closing an issue passes the comment", async () => {
+  const runner = new FakeRunner();
+
+  await tracker(runner).close(issue(7), "Fixed in #100.");
+
+  assert.deepEqual(runner.calls[0]!.args, [
+    "issue",
+    "close",
+    "7",
+    "--repo",
+    "acme/widget",
+    "--comment",
+    "Fixed in #100.",
+  ]);
+});
+
+test("creates a PR and parses its number from the URL", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    { stdout: "[]", stderr: "", exitCode: 0 },
+    {
+      stdout: "https://github.com/acme/widget/pull/123\n",
+      stderr: "",
+      exitCode: 0,
+    },
+  );
+
+  const pr = await tracker(runner).createPullRequest({
+    issue: issue(7),
+    branch: "softfac/7",
+    title: "fix: Fix it",
+    body: "Fixes #7",
+  });
+
+  assert.deepEqual(pr, {
+    number: 123,
+    url: "https://github.com/acme/widget/pull/123",
+  });
+  const call = runner.calls[1]!;
+  assert.deepEqual(call.args.slice(0, 2), ["pr", "create"]);
+  assert.equal(call.args.includes("--base"), true);
+  assert.equal(call.args.includes("main"), true);
+  assert.equal(call.args.includes("softfac/7"), true);
+});
+
+test("reuses an open PR for the branch instead of creating another", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push({
+    stdout: JSON.stringify([
+      { number: 55, url: "https://github.com/acme/widget/pull/55" },
+    ]),
+    stderr: "",
+    exitCode: 0,
+  });
+
+  const pr = await tracker(runner).createPullRequest({
+    issue: issue(7),
+    branch: "softfac/7",
+    title: "fix: Fix it",
+    body: "Fixes #7",
+  });
+
+  assert.deepEqual(pr, {
+    number: 55,
+    url: "https://github.com/acme/widget/pull/55",
+  });
+  assert.equal(runner.calls.length, 1);
+  assert.deepEqual(runner.calls[0]!.args.slice(0, 2), ["pr", "list"]);
+  assert.equal(runner.calls[0]!.args.includes("--head"), true);
+  assert.equal(runner.calls[0]!.args.includes("softfac/7"), true);
+});
+
+test("rejects an invalid PR list payload", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push({ stdout: "{}", stderr: "", exitCode: 0 });
+
+  await assert.rejects(
+    () =>
+      tracker(runner).createPullRequest({
+        issue: issue(7),
+        branch: "softfac/7",
+        title: "fix: Fix it",
+        body: "Fixes #7",
+      }),
+    /invalid payload/i,
+  );
+});
+
+test("merging uses squash and deletes the branch", async () => {
+  const runner = new FakeRunner();
+
+  await tracker(runner).mergePullRequest(123);
+
+  assert.deepEqual(runner.calls[0]!.args, [
+    "pr",
+    "merge",
+    "123",
+    "--repo",
+    "acme/widget",
+    "--squash",
+    "--delete-branch",
+  ]);
+});
+
+test("fails clearly when gh does not return a PR URL", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    { stdout: "[]", stderr: "", exitCode: 0 },
+    { stdout: "created", stderr: "", exitCode: 0 },
+  );
+
+  await assert.rejects(
+    () =>
+      tracker(runner).createPullRequest({
+        issue: issue(7),
+        branch: "softfac/7",
+        title: "fix: Fix it",
+        body: "Fixes #7",
+      }),
+    /could not parse PR number/i,
+  );
+});
