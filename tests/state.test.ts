@@ -164,6 +164,65 @@ test("rejects malformed architecture decisions", async () => {
   await assert.rejects(() => store.read(), /architecture.*decision/i);
 });
 
+test("round-trips the issues filed for a follow-up", async () => {
+  const dir = await tempDir();
+  const path = join(dir, "state.json");
+  await writeFile(
+    path,
+    JSON.stringify({
+      version: 2,
+      architecture: {
+        lastReviewedBaseSha: "abc123",
+        decisions: [
+          {
+            ...decision({ followUps: ["Extract a port"] }),
+            filedFollowUps: [{ text: "Extract a port", number: 88 }],
+          },
+        ],
+      },
+      sessions: {},
+      issues: {},
+      updatedAt: "2026-10-24T00:00:00.000Z",
+    }),
+    "utf8",
+  );
+
+  const state = await new FileStateStore(path).read();
+
+  assert.deepEqual(state.architecture.decisions[0]!.filedFollowUps, [
+    { text: "Extract a port", number: 88 },
+  ]);
+});
+
+test("rejects a malformed filed follow-up", async () => {
+  const dir = await tempDir();
+  const path = join(dir, "state.json");
+  await writeFile(
+    path,
+    JSON.stringify({
+      version: 2,
+      architecture: {
+        lastReviewedBaseSha: null,
+        decisions: [
+          {
+            ...decision(),
+            filedFollowUps: [{ text: "Extract a port", number: "88" }],
+          },
+        ],
+      },
+      sessions: {},
+      issues: {},
+      updatedAt: "2026-10-24T00:00:00.000Z",
+    }),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () => new FileStateStore(path).read(),
+    /filedFollowUps/i,
+  );
+});
+
 test("updates state through a mutator and persists it", async () => {
   const dir = await tempDir();
   const store = new FileStateStore(join(dir, "state.json"));

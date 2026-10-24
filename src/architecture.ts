@@ -8,6 +8,11 @@ export interface ArchitectureVerdict {
   readonly followUps: string[];
 }
 
+export interface FiledFollowUp {
+  readonly text: string;
+  readonly number: number;
+}
+
 export interface ArchitectureDecisionRecord {
   readonly branch: string;
   readonly fromSha: string | null;
@@ -16,6 +21,8 @@ export interface ArchitectureDecisionRecord {
   readonly decision: ArchitectureDecision;
   readonly summary: string;
   readonly followUps: readonly string[];
+  /** The issues filed for the follow-ups above, when filing succeeded. */
+  readonly filedFollowUps?: readonly FiledFollowUp[];
   readonly reviewedAt: string;
 }
 
@@ -129,10 +136,21 @@ export function formatArchitectureHistory(
 
   return decisions
     .map((decision) => {
+      const filed = new Map(
+        (decision.filedFollowUps ?? []).map((entry) => [
+          normalizeFollowUp(entry.text),
+          entry.number,
+        ]),
+      );
       const followUps =
         decision.followUps.length === 0
           ? ""
-          : ` Follow-ups: ${decision.followUps.join("; ")}.`;
+          : ` Follow-ups: ${decision.followUps
+              .map((text) => {
+                const number = filed.get(normalizeFollowUp(text));
+                return number === undefined ? text : `${text} (filed as #${number})`;
+              })
+              .join("; ")}.`;
       const from =
         decision.fromSha === null ? "initial" : decision.fromSha.slice(0, 7);
       const range = `${from}..${decision.toSha.slice(0, 7)}`;

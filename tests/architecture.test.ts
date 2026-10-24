@@ -141,6 +141,7 @@ test("formats prior decisions for the architect prompt", () => {
       decision: "changes_requested",
       summary: "Split billing.",
       followUps: ["Extract a port", "Write an ADR"],
+      filedFollowUps: [{ text: "Extract a port", number: 88 }],
       reviewedAt: "2026-10-24T12:00:00Z",
     },
     {
@@ -157,7 +158,7 @@ test("formats prior decisions for the architect prompt", () => {
 
   assert.match(
     text,
-    /- 2026-10-24 changes_requested on softfac\/12 \(aaaaaaa\.\.bbbbbbb\): Split billing\. Follow-ups: Extract a port; Write an ADR\./,
+    /- 2026-10-24 changes_requested on softfac\/12 \(aaaaaaa\.\.bbbbbbb\): Split billing\. Follow-ups: Extract a port \(filed as #88\); Write an ADR\./,
   );
   assert.match(
     text,

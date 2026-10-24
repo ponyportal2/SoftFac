@@ -57,20 +57,25 @@ A Pi-native software factory:
       and pushes. Handled ids live on the issue record, so a comment is never implemented twice.
 - [x] An interrupted feedback run recovers to `pull-request` and re-polls the PR instead of
       requeueing the issue as fresh work.
-- [x] 215 tests, typecheck clean, `npm run build` clean.
+- [x] `softfac status` and the architect prompt show the issue filed for each follow-up
+      (`filed as #N`), persisted on the decision record.
+- [x] Follow-up triage decided: no automatic promotion. The label is informational and a human
+      adds `softfac:ready` to the follow-ups worth doing, so the factory cannot feed itself.
+- [x] 217 tests, typecheck clean, `npm run build` clean.
 
 ## Next (pick up here)
 
-1. **Triage architecture follow-ups.** They are filed with `softfac:follow-up` and are not
-   picked up automatically. Decide whether the factory should promote them to `softfac:ready`
-   after a human labels them, or whether the label itself is enough.
+Nothing queued. Candidates from the ideas list, roughly in value order:
+
+1. Let the architect read the contents of the most recent ADRs, not only their paths.
+2. Per-area reviewer prompts (a bug reviewer cares about regression tests; a feature reviewer
+   about design).
+3. Cost/token accounting per issue from Pi's session metadata.
 
 ## Ideas / not scheduled
 
-- Cost/token accounting per issue from Pi's session metadata.
-- Per-area reviewer prompts or round limits.
-- Show filed follow-up issue numbers in `softfac status`.
-- Let the architect read the contents of ADRs instead of only their paths.
+- Per-area round limits.
+- A `softfac follow-ups` command that lists the open follow-up pile.
 
 ## Known limitations
 

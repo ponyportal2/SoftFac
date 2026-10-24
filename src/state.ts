@@ -1,7 +1,10 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import type { ArchitectureDecisionRecord } from "./architecture.js";
+import type {
+  ArchitectureDecisionRecord,
+  FiledFollowUp,
+} from "./architecture.js";
 import type { IssueKind } from "./policy.js";
 
 export type IssueStatus =
@@ -113,6 +116,8 @@ function parseDecision(
     );
   }
 
+  const filedFollowUps = parseFiledFollowUps(value["filedFollowUps"], field);
+
   return {
     branch: requireString(value["branch"], `${field}.branch`),
     fromSha,
@@ -121,8 +126,36 @@ function parseDecision(
     decision,
     summary: requireString(value["summary"], `${field}.summary`),
     followUps,
+    ...(filedFollowUps === undefined ? {} : { filedFollowUps }),
     reviewedAt: requireString(value["reviewedAt"], `${field}.reviewedAt`),
   };
+}
+
+function parseFiledFollowUps(
+  value: unknown,
+  field: string,
+): FiledFollowUp[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(
+      `invalid softfac state: ${field}.filedFollowUps must be an array`,
+    );
+  }
+  return value.map((item, index) => {
+    if (
+      !isRecord(item) ||
+      typeof item["text"] !== "string" ||
+      typeof item["number"] !== "number" ||
+      !Number.isInteger(item["number"])
+    ) {
+      throw new Error(
+        `invalid softfac state: ${field}.filedFollowUps[${index}] must be {text, number}`,
+      );
+    }
+    return { text: item["text"], number: item["number"] };
+  });
 }
 
 function parseArchitecture(value: unknown): ArchitectureState {

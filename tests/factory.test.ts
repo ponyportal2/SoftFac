@@ -160,7 +160,7 @@ test("keeps reviewer sessions per issue area", async () => {
 
 test("files new architecture follow-ups as issues", async () => {
   const target = issue(42, ["feature"]);
-  const { tracker, git, agents, factory } = setup([target]);
+  const { tracker, git, agents, state, factory } = setup([target]);
   agents.architectResults = [
     {
       verdict: {
@@ -180,6 +180,10 @@ test("files new architecture follow-ups as issues", async () => {
   assert.deepEqual(tracker.createdIssues[0]!.labels, ["softfac:follow-up"]);
   assert.match(tracker.createdIssues[0]!.body, /review of #42/);
   assert.match(git.files[0]!.content, /Split the parser \(filed as #900\)/);
+  assert.deepEqual(state.state.architecture.decisions[0]!.filedFollowUps, [
+    { text: "Split the parser", number: 900 },
+    { text: "Add an ADR for the boundary", number: 901 },
+  ]);
 });
 
 test("does not re-file a follow-up raised by an earlier review", async () => {

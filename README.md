@@ -165,12 +165,19 @@ Each review:
    issue creation is logged and does not block the PR.
 3. Commits `docs/architecture/reviews/<date>-<sha>.md` to the branch, linking filed follow-ups.
 4. Applies `arch:approved` or `arch:changes-requested` to the issue.
-5. Appends the decision (summary and follow-ups) to state, keeping the last 10.
+5. Appends the decision (summary, follow-ups, and the issue filed for each) to state, keeping
+   the last 10.
 
 Because decisions are persisted and fed back into the prompt, the architect stays consistent
 between reviews instead of re-litigating settled questions, and a follow-up that is still in the
 retained decision history is not filed again. An `arch:changes-requested` verdict
 blocks the issue rather than looping back to the implementer — the human decides how to proceed.
+
+Follow-ups are **not** promoted automatically. An architect that files work the factory
+immediately implements would feed itself, and each new review would file the next batch. The
+`softfac:follow-up` label is informational: read the pile, then add `softfac:ready` to the
+follow-ups worth doing. That label is all the factory needs, and `softfac status` shows the
+issue number filed for each follow-up.
 
 ## The TDD gate
 

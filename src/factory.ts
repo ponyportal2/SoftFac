@@ -703,6 +703,7 @@ export class Factory {
         decision: result.verdict.decision,
         summary: result.verdict.summary,
         followUps: result.verdict.followUps,
+        ...(filed.length === 0 ? {} : { filedFollowUps: filed }),
         reviewedAt,
       }),
       updatedAt: reviewedAt,
