@@ -6,11 +6,12 @@ const STATUS_RANK: Record<IssueStatus, number> = {
   running: 0,
   reviewing: 1,
   architecture: 2,
-  pending: 3,
-  "pull-request": 4,
-  blocked: 5,
-  failed: 6,
-  done: 7,
+  feedback: 3,
+  pending: 4,
+  "pull-request": 5,
+  blocked: 6,
+  failed: 7,
+  done: 8,
 };
 
 const HISTORY_PREVIEW = 3;

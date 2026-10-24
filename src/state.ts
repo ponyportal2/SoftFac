@@ -9,6 +9,7 @@ export type IssueStatus =
   | "running"
   | "reviewing"
   | "architecture"
+  | "feedback"
   | "pull-request"
   | "done"
   | "blocked"
@@ -21,6 +22,8 @@ export interface IssueRecord {
   readonly branch: string;
   readonly prNumber?: number;
   readonly lastError?: string;
+  /** Feedback ids already addressed, so a comment is never implemented twice. */
+  readonly addressedFeedback?: readonly string[];
   readonly updatedAt: string;
 }
 

@@ -52,14 +52,16 @@ A Pi-native software factory:
 - [x] Reviewer sessions are keyed by issue area (`reviewer:bug`, `reviewer:feature`, ...)
       instead of one immortal session for the whole repository.
 - [x] Reusing an open PR after a crash refreshes its title and body with `gh pr edit`.
-- [x] 205 tests, typecheck clean, `npm run build` clean.
+- [x] Human PR feedback: while an issue waits in the human pile, each cycle polls its PR for
+      comments and change-request reviews, hands them to the implementer, re-reviews, verifies,
+      and pushes. Handled ids live on the issue record, so a comment is never implemented twice.
+- [x] An interrupted feedback run recovers to `pull-request` and re-polls the PR instead of
+      requeueing the issue as fresh work.
+- [x] 215 tests, typecheck clean, `npm run build` clean.
 
 ## Next (pick up here)
 
-1. **React to human PR review comments.** Poll PR reviews for issues in the human approval pile,
-   feed the latest human comment to the implementer as review feedback, re-review, and push.
-   Needs a decision on the round cap and on who clears `softfac:needs-human`.
-2. **Triage architecture follow-ups.** They are filed with `softfac:follow-up` and are not
+1. **Triage architecture follow-ups.** They are filed with `softfac:follow-up` and are not
    picked up automatically. Decide whether the factory should promote them to `softfac:ready`
    after a human labels them, or whether the label itself is enough.
 
@@ -72,7 +74,9 @@ A Pi-native software factory:
 
 ## Known limitations
 
-- The factory does not react to human review comments on a PR; a blocked or human-review
-  issue is resumed only by re-labelling it.
+- Every new human comment on a waiting PR is treated as a change request, so a non-actionable
+  comment still starts a feedback round.
+- A feedback round does not re-run the architecture gate; the issue already passed it and a
+  human merges the result.
 - The architect sees the diff plus a repository outline, not the whole repository.
 - Reviewer sessions are reused per area, so a very long-lived session can still drift.

@@ -92,6 +92,18 @@ export interface CreateIssueInput {
   readonly labels: readonly string[];
 }
 
+export interface PullRequestFeedback {
+  readonly id: string;
+  readonly author: string;
+  readonly body: string;
+  readonly createdAt: string;
+}
+
+export interface PullRequestDiscussion {
+  readonly state: "OPEN" | "MERGED" | "CLOSED";
+  readonly feedback: readonly PullRequestFeedback[];
+}
+
 export interface CreatePullRequestInput {
   readonly issue: Issue;
   readonly branch: string;
@@ -101,6 +113,7 @@ export interface CreatePullRequestInput {
 
 export interface IssueTracker {
   listReady(): Promise<Issue[]>;
+  getIssue(issueNumber: number): Promise<Issue>;
   claim(issue: Issue): Promise<void>;
   requeue(issueNumber: number): Promise<void>;
   block(issue: Issue, reason: string): Promise<void>;
@@ -110,6 +123,7 @@ export interface IssueTracker {
   close(issue: Issue, comment?: string): Promise<void>;
   createIssue(input: CreateIssueInput): Promise<Issue>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequest>;
+  pullRequestDiscussion(prNumber: number): Promise<PullRequestDiscussion>;
   pullRequestPolicy(prNumber: number): Promise<PolicyResult>;
   mergePullRequest(prNumber: number): Promise<void>;
 }

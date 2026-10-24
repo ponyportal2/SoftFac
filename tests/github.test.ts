@@ -316,3 +316,140 @@ test("fails clearly when gh does not return a PR URL", async () => {
     /could not parse PR number/i,
   );
 });
+
+test("reads one issue by number", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push({
+    stdout: JSON.stringify({
+      number: 7,
+      title: "Fix it",
+      body: "body",
+      url: "https://example.test/issues/7",
+      labels: [{ name: "bug" }, { name: "feature" }],
+    }),
+    stderr: "",
+    exitCode: 0,
+  });
+
+  const found = await tracker(runner).getIssue(7);
+
+  assert.deepEqual(found, {
+    number: 7,
+    title: "Fix it",
+    body: "body",
+    url: "https://example.test/issues/7",
+    labels: ["bug", "feature"],
+  });
+  assert.deepEqual(runner.calls[0]!.args, [
+    "issue",
+    "view",
+    "7",
+    "--repo",
+    "acme/widget",
+    "--json",
+    "number,title,body,url,labels",
+  ]);
+});
+
+test("collects human feedback and ignores the factory's own comments", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push({
+    stdout: JSON.stringify({
+      state: "OPEN",
+      reviews: [
+        {
+          id: "R_own",
+          author: { login: "softfac-bot" },
+          body: "Opened a PR for this.",
+          state: "COMMENTED",
+          submittedAt: "2026-10-24T10:00:00Z",
+          viewerDidAuthor: true,
+        },
+        {
+          id: "R_later",
+          author: { login: "sam" },
+          body: "Second thought: rename it.",
+          state: "CHANGES_REQUESTED",
+          submittedAt: "2026-10-24T12:00:00Z",
+        },
+        {
+          id: "R_approve",
+          author: { login: "sam" },
+          body: "Looks good now.",
+          state: "APPROVED",
+          submittedAt: "2026-10-24T11:00:00Z",
+        },
+      ],
+      comments: [
+        {
+          id: "C_1",
+          author: { login: "kim" },
+          body: "  Please add a null check.  ",
+          createdAt: "2026-10-24T09:00:00Z",
+        },
+        {
+          id: "C_empty",
+          author: { login: "kim" },
+          body: "   ",
+          createdAt: "2026-10-24T09:30:00Z",
+        },
+        {
+          id: "C_own",
+          author: { login: "softfac-bot" },
+          body: "Addressed the feedback.",
+          createdAt: "2026-10-24T10:30:00Z",
+          viewerDidAuthor: true,
+        },
+      ],
+    }),
+    stderr: "",
+    exitCode: 0,
+  });
+
+  const discussion = await tracker(runner).pullRequestDiscussion(55);
+
+  assert.equal(discussion.state, "OPEN");
+  assert.deepEqual(discussion.feedback, [
+    {
+      id: "comment:C_1",
+      author: "kim",
+      body: "Please add a null check.",
+      createdAt: "2026-10-24T09:00:00Z",
+    },
+    {
+      id: "review:R_later",
+      author: "sam",
+      body: "Second thought: rename it.",
+      createdAt: "2026-10-24T12:00:00Z",
+    },
+  ]);
+  assert.deepEqual(runner.calls[0]!.args.slice(0, 2), ["pr", "view"]);
+  assert.equal(runner.calls[0]!.args.includes("state,reviews,comments"), true);
+});
+
+test("reports a closed PR so the factory can skip it", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push({
+    stdout: JSON.stringify({ state: "MERGED", reviews: [], comments: [] }),
+    stderr: "",
+    exitCode: 0,
+  });
+
+  const discussion = await tracker(runner).pullRequestDiscussion(55);
+
+  assert.deepEqual(discussion, { state: "MERGED", feedback: [] });
+});
+
+test("rejects an unknown PR state", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push({
+    stdout: JSON.stringify({ state: "DRAFT", reviews: [], comments: [] }),
+    stderr: "",
+    exitCode: 0,
+  });
+
+  await assert.rejects(
+    () => tracker(runner).pullRequestDiscussion(55),
+    /invalid pull request state/i,
+  );
+});

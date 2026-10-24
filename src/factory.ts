@@ -112,13 +112,22 @@ export class Factory {
       (record) =>
         record.status === "running" ||
         record.status === "reviewing" ||
-        record.status === "architecture",
+        record.status === "architecture" ||
+        record.status === "feedback",
     );
     if (stale.length === 0) {
       return 0;
     }
 
     for (const record of stale) {
+      if (record.status === "feedback") {
+        // The issue is still in the human approval pile; only the feedback
+        // round was interrupted, so re-poll the PR instead of requeueing it.
+        this.#logger?.info(
+          `issue #${record.number}: will re-poll the PR for feedback after an interrupted run`,
+        );
+        continue;
+      }
       await this.#tracker.requeue(record.number);
       this.#logger?.info(
         `issue #${record.number}: requeued after an interrupted ${record.status} run`,
@@ -131,7 +140,7 @@ export class Factory {
       for (const record of stale) {
         issues[String(record.number)] = {
           ...record,
-          status: "pending",
+          status: record.status === "feedback" ? "pull-request" : "pending",
           updatedAt,
         };
       }
@@ -180,6 +189,9 @@ export class Factory {
       }
     }
 
+    // Human review arrives after an issue leaves the ready pile, so it is
+    // polled separately and never re-runs the first implementation.
+    results.push(...(await this.#addressFeedback()));
     return results;
   }
 
@@ -207,6 +219,180 @@ export class Factory {
         );
       }
     }
+  }
+
+  async #addressFeedback(): Promise<ProcessResult[]> {
+    const state = await this.#state.read();
+    const waiting = Object.values(state.issues)
+      .filter(
+        (record): record is IssueRecord & { prNumber: number } =>
+          record.status === "pull-request" && record.prNumber !== undefined,
+      )
+      .sort((left, right) => left.number - right.number);
+
+    const results: ProcessResult[] = [];
+    for (const record of waiting) {
+      try {
+        const result = await this.#addressIssueFeedback(record);
+        if (result !== undefined) {
+          results.push(result);
+        }
+      } catch (error) {
+        // A single unreadable PR must not stop the rest of the cycle.
+        this.#logger?.warn(
+          `issue #${record.number}: could not poll PR #${record.prNumber} for feedback: ` +
+            errorMessage(error),
+        );
+      }
+    }
+    return results;
+  }
+
+  async #addressIssueFeedback(
+    record: IssueRecord & { prNumber: number },
+  ): Promise<ProcessResult | undefined> {
+    const prNumber = record.prNumber;
+    const discussion = await this.#tracker.pullRequestDiscussion(prNumber);
+    if (discussion.state !== "OPEN") {
+      return undefined;
+    }
+
+    const addressed = new Set(record.addressedFeedback ?? []);
+    const fresh = discussion.feedback.filter((item) => !addressed.has(item.id));
+    if (fresh.length === 0) {
+      return undefined;
+    }
+
+    const issue = await this.#tracker.getIssue(record.number);
+    const policy = issuePolicy(this.#config);
+    const kind = classifyIssue(issue.labels, policy);
+    const area = reviewerArea(issue.labels, policy);
+    const branch = record.branch;
+    this.#logger?.info(
+      `issue #${issue.number}: addressing ${fresh.length} human review ` +
+        `comment(s) on PR #${prNumber}`,
+    );
+    // A crash mid-round must not requeue the issue as fresh work; recovery
+    // turns this back into "pull-request" and the PR is polled again.
+    await this.#setIssue(issue, kind, branch, "feedback", { prNumber });
+
+    const feedback: ReviewResult = {
+      verdict: "changes_requested",
+      summary: `A human reviewer requested changes on PR #${prNumber}. Address every point below.`,
+      findings: fresh.map((item) => `${item.author}: ${item.body}`),
+      commits: 0,
+    };
+
+    let implementerSession = await this.#session("implementer", issue.number);
+    let implementation = await this.#agents.implement(
+      this.#implementerInput(issue, branch, implementerSession, feedback),
+    );
+    await this.#remember("implementer", issue.number, implementation.sessionId);
+    if (implementation.commits <= 0) {
+      return this.#block(
+        issue,
+        kind,
+        branch,
+        `Implementer produced no commits while addressing review feedback on PR #${prNumber}.`,
+        { prNumber },
+      );
+    }
+
+    let reviewerSession = await this.#session("reviewer", issue.number, area);
+    let review = await this.#agents.review(
+      this.#reviewerInput(
+        issue,
+        branch,
+        reviewerSession,
+        implementation.sessionId,
+      ),
+    );
+    await this.#remember("reviewer", issue.number, review.sessionId, area);
+    reviewerSession = review.sessionId ?? reviewerSession;
+
+    let totalRounds = 1;
+    let extraRounds = 0;
+    while (review.verdict !== "approved") {
+      if (extraRounds >= this.#config.review.maxRounds) {
+        break;
+      }
+      extraRounds += 1;
+      totalRounds += 1;
+
+      implementation = await this.#agents.implement(
+        this.#implementerInput(
+          issue,
+          branch,
+          implementation.sessionId ?? implementerSession,
+          review,
+        ),
+      );
+      await this.#remember("implementer", issue.number, implementation.sessionId);
+      implementerSession = implementation.sessionId ?? implementerSession;
+
+      if (implementation.commits <= 0) {
+        return this.#block(
+          issue,
+          kind,
+          branch,
+          `Implementer produced no commits while addressing review feedback on PR #${prNumber} (round ${totalRounds}).`,
+          { reviewRounds: totalRounds, prNumber },
+        );
+      }
+
+      review = await this.#agents.review(
+        this.#reviewerInput(
+          issue,
+          branch,
+          reviewerSession,
+          implementation.sessionId,
+        ),
+      );
+      await this.#remember("reviewer", issue.number, review.sessionId, area);
+      reviewerSession = review.sessionId ?? reviewerSession;
+    }
+
+    if (review.verdict !== "approved") {
+      const findings = review.findings.map((finding) => `- ${finding}`).join("\n");
+      return this.#block(
+        issue,
+        kind,
+        branch,
+        `Review still requests changes on the human feedback for PR #${prNumber} after ${totalRounds} rounds: ${review.summary}` +
+          (findings === "" ? "" : `\n${findings}`),
+        { reviewRounds: totalRounds, prNumber },
+      );
+    }
+
+    const verificationFailure = await this.#verify(branch);
+    if (verificationFailure !== undefined) {
+      return this.#block(issue, kind, branch, verificationFailure, {
+        reviewRounds: totalRounds,
+        prNumber,
+      });
+    }
+
+    await this.#git.push(branch);
+    await this.#tracker.comment(
+      issue,
+      `Addressed ${fresh.length} human review comment(s) on PR #${prNumber} in ` +
+        `${totalRounds} review round(s). The issue stays in the human approval pile ` +
+        "until the PR is merged.",
+    );
+    await this.#setIssue(issue, kind, branch, "pull-request", {
+      prNumber,
+      addressedFeedback: fresh.map((item) => item.id),
+    });
+
+    return {
+      issueNumber: issue.number,
+      kind,
+      outcome: "pull-request",
+      branch,
+      reviewRounds: totalRounds,
+      architecture: "skipped",
+      prNumber,
+    };
   }
 
   async #runIssue(
@@ -745,24 +931,40 @@ export class Factory {
     kind: IssueKind,
     branch: string,
     status: IssueStatus,
-    patch: { readonly prNumber?: number; readonly lastError?: string } = {},
+    patch: {
+      readonly prNumber?: number;
+      readonly lastError?: string;
+      readonly addressedFeedback?: readonly string[];
+    } = {},
   ): Promise<void> {
-    const record: IssueRecord = {
-      number: issue.number,
-      kind,
-      branch,
-      status,
-      updatedAt: this.#now().toISOString(),
-      ...(patch.prNumber === undefined ? {} : { prNumber: patch.prNumber }),
-      ...(patch.lastError === undefined ? {} : { lastError: patch.lastError }),
-    };
-    await this.#state.update((state: FactoryState) => ({
-      ...state,
-      issues: {
-        ...state.issues,
-        [String(issue.number)]: record,
-      },
-      updatedAt: record.updatedAt,
-    }));
+    await this.#state.update((state: FactoryState) => {
+      const previous = state.issues[String(issue.number)];
+      const prNumber = patch.prNumber ?? previous?.prNumber;
+      const addressed = new Set(previous?.addressedFeedback ?? []);
+      for (const id of patch.addressedFeedback ?? []) {
+        addressed.add(id);
+      }
+      const updatedAt = this.#now().toISOString();
+      const record: IssueRecord = {
+        number: issue.number,
+        kind,
+        branch,
+        status,
+        updatedAt,
+        ...(prNumber === undefined ? {} : { prNumber }),
+        ...(patch.lastError === undefined ? {} : { lastError: patch.lastError }),
+        ...(addressed.size === 0
+          ? {}
+          : { addressedFeedback: [...addressed] }),
+      };
+      return {
+        ...state,
+        issues: {
+          ...state.issues,
+          [String(issue.number)]: record,
+        },
+        updatedAt,
+      };
+    });
   }
 }

@@ -34,7 +34,7 @@ Commands:
   doctor     Check config, the git repository, gh, pi, and the configured sandbox.
   labels     Create or update the required GitHub labels.
   status     Show recorded issues, sessions, and architecture decisions.
-  run        Process ready issues continuously (or once with --once).
+  run        Process ready issues and PR feedback continuously (or once with --once).
   check-pr   Enforce the PR policy; --repair reopens an issue closed by a bad PR.
 `;
 

@@ -11,7 +11,9 @@ reviewed, policy-checked pull request using three long-lived agent roles:
 
 Bugs are merged and closed automatically once the review gates pass and the live PR satisfies
 the same policy check CI runs. Substantial changes stop at a human approval gate. Everything the
-agents do is committed to the branch, so the pull request is the audit trail.
+agents do is committed to the branch, so the pull request is the audit trail. Comments left on
+a waiting PR are fed back to the implementer, so the human reviews a moving branch rather than a
+frozen one.
 
 ## How a run works
 
@@ -47,6 +49,17 @@ policy check (same as CI) -- fail? block the issue, keep the PR open
    |
    v
 bug? merge + close : label softfac:needs-human
+   |
+   v
+poll the PR for human feedback
+   |
+   v
+new comment or change request?
+   |  yes
+   -> implementer -> reviewer -> verify -> push -> poll again
+   |  no
+   v
+wait for the next poll
 ```
 
 Every step records its outcome in `.softfac/state.json`, so restarting the daemon resumes
@@ -59,7 +72,9 @@ sync is skipped with a warning and the run continues on the existing base.
 
 **Crash recovery.** On the first cycle of a process, SoftFac requeues every issue whose recorded
 status is `running`, `reviewing`, or `architecture` — it swaps `softfac:running` back to
-`softfac:ready` and resets the record to `pending`. Sessions are persisted, so the resumed
+`softfac:ready` and resets the record to `pending`. A record left in `feedback` is different:
+the issue is already in the human pile, so it goes back to `pull-request` and the PR is polled
+again instead of being re-claimed as fresh work. Sessions are persisted, so the resumed
 implementer/reviewer continue where they stopped. PR creation is idempotent: if the branch
 already has an open PR, that PR is reused and its title and body are refreshed, instead of
 creating a duplicate or leaving a stale review summary behind.
@@ -110,6 +125,15 @@ never merges on the strength of the agent's own verdict.
 The "human approval pile" is the `softfac:needs-human` label plus a comment linking the PR.
 The policy action re-runs on every push, label change, and review, so the required check turns
 green as soon as a human approves.
+
+**Reacting to review comments.** While an issue sits in the pile, every cycle polls its PR for
+comments and change-request reviews written by anyone other than the factory. New feedback is
+handed to the implementer as review notes, the reviewer re-reviews, the verification commands
+run again, and the result is pushed to the same branch. Handled comments are recorded by id in
+the state file, so the same comment is never implemented twice; a `MERGED` or `CLOSED` PR is
+skipped. If the reviewer still requests changes after `review.maxRounds` extra rounds, the
+issue is blocked instead. The label stays put: merging the PR or removing the label is the
+human's decision, not the factory's.
 
 The Action runs `check-pr --repair`. When a PR violates the policy and the issue it references
 is already closed (a closing keyword landed too early, or a bug PR was merged without its
@@ -202,7 +226,7 @@ silently ignored.
 | `architecture.everyCommits` | `10` | Review cadence |
 | `architecture.requireForSubstantial` | `true` | Always review substantial changes |
 | `architecture.maxDiffChars` | `60000` | Character cap on the diff sent to the architect |
-| `review.maxRounds` | `2` | Extra implement/review rounds after the first review |
+| `review.maxRounds` | `2` | Extra implement/review rounds after the first review; also caps a human-feedback batch |
 | `tdd.testPatterns` | see above | Glob patterns that count as test files |
 | `verification.commands` | `[]` | Commands run in the sandbox before opening a PR |
 | `bugs.autoMerge` | `true` | Merge bug PRs automatically |
@@ -249,8 +273,8 @@ check.
 - `sessions` — implementer sessions per issue, one continuous reviewer session per area
   (`reviewer:bug`, `reviewer:feature`, ...), and no architect session (the architect always
   starts fresh).
-- `issues` — status (`pending`, `running`, `reviewing`, `architecture`, `pull-request`,
-  `blocked`, `done`, `failed`), branch, PR number, review rounds.
+- `issues` — status (`pending`, `running`, `reviewing`, `architecture`, `feedback`,
+  `pull-request`, `blocked`, `done`, `failed`), branch, PR number, handled feedback ids.
 - `architecture` — the review anchor and the last 10 decisions.
 
 Writes are atomic (temp file + rename) and the file is versioned; version 1 state is migrated
@@ -264,7 +288,7 @@ softfac init [--repo owner/repo]   Create config, prompts, and review directorie
 softfac doctor                     Check config, the git repo and origin, gh, pi, the sandbox
 softfac labels                     Create missing labels (never overwrites existing ones)
 softfac status                     Show recorded issues, sessions, and architecture decisions
-softfac run [--once]               Process ready issues continuously, or once (single instance)
+softfac run [--once]               Process ready issues and PR feedback continuously, or once
 softfac check-pr <number> [--repair]  Enforce the PR policy; --repair reopens a closed issue
 ```
 
@@ -283,7 +307,8 @@ depends only on those ports. Tests drive the factory through in-memory fakes in
 
 ## Limitations
 
-- Human review comments on a PR are not consumed; a blocked issue is resumed by re-labelling it.
+- Every new human comment on a waiting PR is treated as a change request, so a non-actionable
+  comment (a plain "thanks", say) still starts a feedback round.
 - `review.maxRounds` counts extra rounds after the initial review.
 - The architect sees the diff of the reviewed range plus a repository outline, not the contents
   of the whole repository.

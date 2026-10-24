@@ -11,6 +11,7 @@ import type {
   Issue,
   IssueTracker,
   PullRequest,
+  PullRequestDiscussion,
   ReviewInput,
   ReviewResult,
   StateStore,
@@ -57,6 +58,9 @@ export class FakeTracker implements IssueTracker {
   createIssueError: Error | undefined;
   #nextIssue = 900;
   readonly pullRequests: CreatePullRequestInput[] = [];
+  readonly knownIssues: Issue[] = [];
+  readonly discussions = new Map<number, PullRequestDiscussion>();
+  readonly discussionPolls: number[] = [];
   readonly policyChecks: number[] = [];
   policyResult: PolicyResult = { ok: true, violations: [] };
   policyError: Error | undefined;
@@ -71,6 +75,16 @@ export class FakeTracker implements IssueTracker {
 
   async listReady(): Promise<Issue[]> {
     return this.issues;
+  }
+
+  async getIssue(issueNumber: number): Promise<Issue> {
+    const found = [...this.knownIssues, ...this.issues].find(
+      (entry) => entry.number === issueNumber,
+    );
+    if (found === undefined) {
+      throw new Error(`issue #${issueNumber} not found`);
+    }
+    return found;
   }
 
   async claim(issue: Issue): Promise<void> {
@@ -126,6 +140,13 @@ export class FakeTracker implements IssueTracker {
       number: this.#prBase + this.pullRequests.length,
       url: `https://example.test/pull/${this.#prBase + this.pullRequests.length}`,
     };
+  }
+
+  async pullRequestDiscussion(
+    prNumber: number,
+  ): Promise<PullRequestDiscussion> {
+    this.discussionPolls.push(prNumber);
+    return this.discussions.get(prNumber) ?? { state: "OPEN", feedback: [] };
   }
 
   async pullRequestPolicy(prNumber: number): Promise<PolicyResult> {

@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { ArchitectureDecisionRecord } from "../src/architecture.js";
 import { parseConfig } from "../src/config.js";
 import { Factory } from "../src/factory.js";
+import type { IssueRecord } from "../src/state.js";
 import { issue, FakeAgents, FakeGit, FakeTracker, MemoryStateStore } from "./support/fakes.js";
 
 function setup(
@@ -310,6 +311,31 @@ test("leaves finished issues alone during recovery", async () => {
   assert.equal(await factory.recoverInterrupted(), 0);
   assert.deepEqual(tracker.requeues, []);
   assert.equal(state.state.issues["42"]!.status, "pull-request");
+});
+
+test("resets an interrupted feedback run without requeueing the issue", async () => {
+  const target = issue(42, ["feature"]);
+  const { tracker, state, factory } = setup([target]);
+  state.state = {
+    ...state.state,
+    issues: {
+      "42": {
+        number: 42,
+        kind: "substantial",
+        status: "feedback",
+        branch: "softfac/42",
+        prNumber: 101,
+        updatedAt: "2026-10-24T11:00:00.000Z",
+      },
+    },
+  };
+
+  const recovered = await factory.recoverInterrupted();
+
+  assert.equal(recovered, 1);
+  assert.deepEqual(tracker.requeues, []);
+  assert.equal(state.state.issues["42"]!.status, "pull-request");
+  assert.equal(state.state.issues["42"]!.prNumber, 101);
 });
 
 test("runOnce recovers interrupted work before claiming", async () => {
@@ -815,4 +841,170 @@ test("blocks a bug that never adds a test", async () => {
   assert.equal(agents.implementCalls.length, 1);
   assert.equal(tracker.pullRequests.length, 0);
   assert.equal(tracker.blocks.length, 1);
+});
+
+function seedWaiting(
+  state: MemoryStateStore,
+  patch: Partial<IssueRecord> = {},
+): void {
+  const base = state.state;
+  state.state = {
+    ...base,
+    issues: {
+      ...base.issues,
+      "42": {
+        number: 42,
+        kind: "substantial",
+        branch: "softfac/42",
+        status: "pull-request",
+        prNumber: 101,
+        updatedAt: "2026-10-24T11:00:00Z",
+        ...patch,
+      },
+    },
+  };
+}
+
+test("addresses new human review feedback on a waiting PR", async () => {
+  const { tracker, git, agents, state, factory } = setup([]);
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "comment:C_1",
+        author: "kim",
+        body: "Please add a null check.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  seedWaiting(state);
+  agents.implementResults = [
+    { sessionId: "impl-2", commits: 1, stdout: "addressed" },
+  ];
+  agents.reviewResults = [
+    { verdict: "approved", summary: "Feedback addressed.", findings: [], commits: 0 },
+  ];
+
+  const results = await factory.runOnce();
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0]!.outcome, "pull-request");
+  assert.equal(results[0]!.prNumber, 101);
+  assert.equal(results[0]!.reviewRounds, 1);
+  assert.equal(agents.implementCalls[0]!.branch, "softfac/42");
+  assert.match(
+    agents.implementCalls[0]!.feedback!.findings[0]!,
+    /kim: Please add a null check\./,
+  );
+  assert.deepEqual(git.pushes, ["softfac/42"]);
+  assert.equal(tracker.claims.length, 0);
+  assert.match(tracker.comments[0]!.body, /1 human review comment/);
+  assert.equal(state.state.issues["42"]!.status, "pull-request");
+  assert.deepEqual(state.state.issues["42"]!.addressedFeedback, [
+    "comment:C_1",
+  ]);
+});
+
+test("does not repeat feedback that was already addressed", async () => {
+  const { tracker, agents, state, factory } = setup([]);
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "comment:C_1",
+        author: "kim",
+        body: "Please add a null check.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  seedWaiting(state, { addressedFeedback: ["comment:C_1"] });
+
+  const results = await factory.runOnce();
+
+  assert.deepEqual(results, []);
+  assert.equal(agents.implementCalls.length, 0);
+});
+
+test("skips a waiting issue whose PR is no longer open", async () => {
+  const { tracker, agents, state, factory } = setup([]);
+  tracker.discussions.set(101, {
+    state: "MERGED",
+    feedback: [
+      {
+        id: "comment:C_1",
+        author: "kim",
+        body: "One more thing.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  seedWaiting(state);
+
+  const results = await factory.runOnce();
+
+  assert.deepEqual(results, []);
+  assert.equal(agents.implementCalls.length, 0);
+  assert.equal(state.state.issues["42"]!.status, "pull-request");
+});
+
+test("blocks when the reviewer still requests changes after a feedback round", async () => {
+  const { tracker, agents, state, factory } = setup([], {
+    review: { maxRounds: 1 },
+  });
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "review:R_1",
+        author: "sam",
+        body: "This is still wrong.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  seedWaiting(state);
+  agents.implementResults = [
+    { commits: 1, stdout: "first" },
+    { commits: 1, stdout: "second" },
+  ];
+  agents.reviewResults = [
+    { verdict: "changes_requested", summary: "Not yet.", findings: ["Still wrong."], commits: 0 },
+    { verdict: "changes_requested", summary: "Not yet.", findings: ["Still wrong."], commits: 0 },
+  ];
+
+  const results = await factory.runOnce();
+
+  assert.equal(results[0]!.outcome, "blocked");
+  assert.match(tracker.blocks[0]!.reason, /still requests changes/i);
+  assert.equal(state.state.issues["42"]!.status, "blocked");
+  assert.equal(state.state.issues["42"]!.addressedFeedback, undefined);
+});
+
+test("blocks when the implementer produces no commits for human feedback", async () => {
+  const { tracker, agents, state, factory } = setup([]);
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "comment:C_1",
+        author: "kim",
+        body: "Please rename it.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  seedWaiting(state);
+  agents.implementResults = [{ commits: 0, stdout: "" }];
+
+  const results = await factory.runOnce();
+
+  assert.equal(results[0]!.outcome, "blocked");
+  assert.match(tracker.blocks[0]!.reason, /no commits/i);
+  assert.equal(agents.reviewCalls.length, 0);
 });

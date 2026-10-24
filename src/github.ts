@@ -10,6 +10,8 @@ import type {
   Issue,
   IssueTracker,
   PullRequest,
+  PullRequestDiscussion,
+  PullRequestFeedback,
 } from "./ports.js";
 
 export interface GitHubTrackerOptions {
@@ -67,12 +69,12 @@ function parseIssue(value: unknown): Issue {
     typeof value["url"] !== "string" ||
     !Array.isArray(value["labels"])
   ) {
-    throw new Error("gh issue list returned an invalid issue");
+    throw new Error("gh issue returned an invalid issue");
   }
 
   const labels = value["labels"].map((label: unknown) => {
     if (!isRecord(label) || typeof label["name"] !== "string") {
-      throw new Error("gh issue list returned an invalid label");
+      throw new Error("gh issue returned an invalid label");
     }
     return label["name"];
   });
@@ -84,6 +86,89 @@ function parseIssue(value: unknown): Issue {
     url: value["url"],
     labels,
   };
+}
+
+function parseDiscussionState(
+  value: unknown,
+): PullRequestDiscussion["state"] {
+  if (value === "OPEN" || value === "MERGED" || value === "CLOSED") {
+    return value;
+  }
+  throw new Error("gh pr view returned an invalid pull request state");
+}
+
+function parseFeedback(
+  entries: unknown,
+  kind: "review" | "comment",
+): PullRequestFeedback[] {
+  if (entries === undefined) {
+    return [];
+  }
+  if (!Array.isArray(entries)) {
+    throw new Error(`gh pr view returned invalid ${kind}s`);
+  }
+
+  const items: PullRequestFeedback[] = [];
+  for (const entry of entries) {
+    if (!isRecord(entry)) {
+      throw new Error(`gh pr view returned an invalid ${kind}`);
+    }
+    // Comments written by the factory itself (the authenticated gh user) are
+    // status updates, not review feedback.
+    if (entry["viewerDidAuthor"] === true) {
+      continue;
+    }
+    if (kind === "review") {
+      const state = entry["state"];
+      // An approval is not a request to change anything, and a pending review
+      // is not visible to the factory yet.
+      if (state !== "CHANGES_REQUESTED" && state !== "COMMENTED") {
+        continue;
+      }
+    }
+    const id = entry["id"];
+    const body = entry["body"];
+    const author = entry["author"];
+    const createdAt = kind === "review" ? entry["submittedAt"] : entry["createdAt"];
+    if (
+      typeof id !== "string" ||
+      typeof body !== "string" ||
+      !isRecord(author) ||
+      typeof author["login"] !== "string" ||
+      typeof createdAt !== "string"
+    ) {
+      throw new Error(`gh pr view returned an invalid ${kind}`);
+    }
+    if (body.trim() === "") {
+      continue;
+    }
+    items.push({
+      id: `${kind}:${id}`,
+      author: author["login"],
+      body: body.trim(),
+      createdAt,
+    });
+  }
+  return items;
+}
+
+function parsePullRequestDiscussion(output: string): PullRequestDiscussion {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch (error) {
+    throw new Error("gh pr view returned invalid JSON", { cause: error });
+  }
+  if (!isRecord(parsed)) {
+    throw new Error("gh pr view returned an invalid payload");
+  }
+
+  const feedback = [
+    ...parseFeedback(parsed["reviews"], "review"),
+    ...parseFeedback(parsed["comments"], "comment"),
+  ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+
+  return { state: parseDiscussionState(parsed["state"]), feedback };
 }
 
 export class GitHubTracker implements IssueTracker {
@@ -132,6 +217,26 @@ export class GitHubTracker implements IssueTracker {
       throw new Error("gh issue list returned a non-array payload");
     }
     return parsed.map(parseIssue);
+  }
+
+  async getIssue(issueNumber: number): Promise<Issue> {
+    const output = await this.#gh([
+      "issue",
+      "view",
+      String(issueNumber),
+      "--repo",
+      this.#repo,
+      "--json",
+      "number,title,body,url,labels",
+    ]);
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(output);
+    } catch (error) {
+      throw new Error("gh issue view returned invalid JSON", { cause: error });
+    }
+    return parseIssue(parsed);
   }
 
   async claim(issue: Issue): Promise<void> {
@@ -316,6 +421,21 @@ export class GitHubTracker implements IssueTracker {
       throw new Error(`could not parse PR number from gh output: ${url}`);
     }
     return { number: Number(match[1]), url };
+  }
+
+  async pullRequestDiscussion(
+    prNumber: number,
+  ): Promise<PullRequestDiscussion> {
+    const output = await this.#gh([
+      "pr",
+      "view",
+      String(prNumber),
+      "--repo",
+      this.#repo,
+      "--json",
+      "state,reviews,comments",
+    ]);
+    return parsePullRequestDiscussion(output);
   }
 
   async pullRequestPolicy(prNumber: number): Promise<PolicyResult> {
