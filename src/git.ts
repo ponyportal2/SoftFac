@@ -146,6 +146,19 @@ export class GitRepo implements GitOps {
       .filter((line) => line !== "");
   }
 
+  async readFile(branch: string, path: string): Promise<string | undefined> {
+    try {
+      return await this.#git(["show", `${branch}:${path}`]);
+    } catch (error) {
+      // A document listed in the tree can still be unreadable (a bad object,
+      // a submodule, a path with a newline); the context is optional.
+      if (error instanceof CommandError) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
   async isAncestor(ancestorSha: string, branch: string): Promise<boolean> {
     try {
       await this.#git(["merge-base", "--is-ancestor", ancestorSha, branch]);

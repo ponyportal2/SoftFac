@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildArchitectureContext } from "../src/architecture-context.js";
+import {
+  buildArchitectureContext,
+  readableDocumentPaths,
+} from "../src/architecture-context.js";
 
 const files = [
   "src/factory.ts",
@@ -45,6 +48,55 @@ test("reports absent context explicitly", () => {
   assert.match(text, /Architecture documents: none tracked/);
   assert.match(text, /Dependency manifests: none tracked/);
   assert.match(text, /Test coverage data: none tracked/);
+});
+
+test("includes the contents of decision documents", () => {
+  const text = buildArchitectureContext({
+    files,
+    changedFiles: [],
+    documents: [
+      { path: "docs/adr/0001-ports.md", content: "Adapters own all I/O." },
+    ],
+  });
+
+  assert.match(text, /Document contents:/);
+  assert.match(text, /### docs\/adr\/0001-ports\.md/);
+  assert.match(text, /Adapters own all I\/O\./);
+});
+
+test("caps the space spent on document contents", () => {
+  const text = buildArchitectureContext({
+    files: [],
+    changedFiles: [],
+    documents: [
+      { path: "docs/adr/0001-ports.md", content: "x".repeat(5000) },
+    ],
+  });
+
+  assert.match(text, /truncated/);
+  assert.equal(text.includes("x".repeat(4001)), false);
+  assert.ok(text.length < 5000);
+});
+
+test("reads the newest decision documents and skips review notes", () => {
+  const paths = readableDocumentPaths([
+    "docs/architecture/reviews/2026-10-24-abcdef1.md",
+    "docs/adr/0001-ports.md",
+    "docs/adr/0007-parser.md",
+    "adr/0002-events.md",
+    "docs/decisions/0003-cache.md",
+    "docs/adr/overview.md",
+    "docs/adr/0004-jobs.md",
+    "docs/adr/0005-auth.md",
+  ]);
+
+  assert.deepEqual(paths, [
+    "docs/adr/0007-parser.md",
+    "docs/adr/0005-auth.md",
+    "docs/adr/0004-jobs.md",
+    "docs/decisions/0003-cache.md",
+    "adr/0002-events.md",
+  ]);
 });
 
 test("caps a long changed-file list", () => {

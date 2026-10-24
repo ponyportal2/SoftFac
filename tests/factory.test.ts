@@ -113,6 +113,7 @@ test("gives the architect the repository context", async () => {
     "docs/adr/0001-ports.md",
     "package.json",
   ];
+  git.fileContents.set("docs/adr/0001-ports.md", "Ports are the only seam.");
   agents.architectResults = [
     {
       verdict: { decision: "approved", summary: "Fine.", followUps: [] },
@@ -127,6 +128,8 @@ test("gives the architect the repository context", async () => {
   assert.match(context, /Module inventory:[\s\S]*- src: 1 file/);
   assert.match(context, /docs\/adr\/0001-ports\.md/);
   assert.match(context, /package\.json/);
+  assert.match(context, /Ports are the only seam\./);
+  assert.deepEqual(git.readFileCalls, ["docs/adr/0001-ports.md"]);
 });
 
 test("keeps reviewer sessions per issue area", async () => {

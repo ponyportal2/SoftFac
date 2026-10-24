@@ -141,6 +141,7 @@ export interface GitOps {
   diff(branch: string, sinceSha: string | null): Promise<string>;
   changedFiles(branch: string, sinceSha: string | null): Promise<string[]>;
   listFiles(branch: string): Promise<string[]>;
+  readFile(branch: string, path: string): Promise<string | undefined>;
   isAncestor(ancestorSha: string, branch: string): Promise<boolean>;
   push(branch: string): Promise<void>;
   commitFile(

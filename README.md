@@ -157,10 +157,11 @@ Each review:
 
 1. Sends the diff, the commit count, the previous decisions, and a repository context to the
    architect. The context lists the changed files, a module inventory, architecture documents
-   (ADRs and review notes), dependency manifests, and the paths of any coverage reports, so the architect can
-   judge the change against the repository it lands in. The diff is capped at
-   `architecture.maxDiffChars`; a larger range is truncated with an explicit marker so the
-   prompt stays within a predictable size.
+   (ADRs and review notes), dependency manifests, and the paths of any coverage reports, and it
+   includes the contents of the five newest decision documents — numbered ADRs first, review
+   notes excluded because prior decisions are already in the prompt — each capped at 4,000
+   characters. The diff is capped at `architecture.maxDiffChars`; a larger range is truncated
+   with an explicit marker so the prompt stays within a predictable size.
 2. Files every follow-up that no earlier review raised as a `softfac:follow-up` issue. A failed
    issue creation is logged and does not block the PR.
 3. Commits `docs/architecture/reviews/<date>-<sha>.md` to the branch, linking filed follow-ups.
@@ -317,8 +318,8 @@ depends only on those ports. Tests drive the factory through in-memory fakes in
 - Every new human comment on a waiting PR is treated as a change request, so a non-actionable
   comment (a plain "thanks", say) still starts a feedback round.
 - `review.maxRounds` counts extra rounds after the initial review.
-- The architect sees the diff of the reviewed range plus a repository outline, not the contents
-  of the whole repository.
+- The architect sees the diff of the reviewed range, a repository outline, and the five newest
+  ADRs, not the contents of the whole repository.
 - Reviewer sessions are reused per area, not per repository; a very long-lived session can still
   drift, which is why the review loop is capped.
 - Verification commands run once, after the architecture gate; a failure blocks the issue

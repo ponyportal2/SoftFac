@@ -1,10 +1,18 @@
+export interface ArchitectureDocument {
+  readonly path: string;
+  readonly content: string;
+}
+
 export interface ArchitectureContextInput {
   readonly files: readonly string[];
   readonly changedFiles: readonly string[];
+  readonly documents?: readonly ArchitectureDocument[];
 }
 
 const CHANGED_LIMIT = 50;
 const DOCUMENT_LIMIT = 20;
+const DOCUMENT_CONTENT_LIMIT = 5;
+const DOCUMENT_CONTENT_CHARS = 4000;
 
 const MANIFEST_NAMES: ReadonlySet<string> = new Set([
   "package.json",
@@ -59,6 +67,52 @@ function isArchitectureDocument(path: string): boolean {
     lower.includes("/adr/") ||
     lower.includes("/decisions/")
   );
+}
+
+function isDecisionDocument(path: string): boolean {
+  return (
+    isArchitectureDocument(path) &&
+    !path.toLowerCase().split("/").includes("reviews")
+  );
+}
+
+function documentOrder(path: string): number {
+  const match = /(\d+)/.exec(basename(path));
+  return match?.[1] === undefined ? 0 : Number(match[1]);
+}
+
+/**
+ * The decision documents worth reading: numbered ADRs first, newest first,
+ * without the architect's own review notes (they are already in the prompt
+ * as prior decisions).
+ */
+export function readableDocumentPaths(files: readonly string[]): string[] {
+  return normalize(files)
+    .filter(isDecisionDocument)
+    .sort(
+      (left, right) =>
+        documentOrder(right) - documentOrder(left) ||
+        right.localeCompare(left),
+    )
+    .slice(0, DOCUMENT_CONTENT_LIMIT);
+}
+
+function documentSection(
+  documents: readonly ArchitectureDocument[],
+): string | undefined {
+  if (documents.length === 0) {
+    return undefined;
+  }
+
+  const blocks = documents.map((document) => {
+    const content = document.content.trim();
+    const body =
+      content.length > DOCUMENT_CONTENT_CHARS
+        ? `${content.slice(0, DOCUMENT_CONTENT_CHARS)}\n… (truncated)`
+        : content;
+    return `### ${document.path}\n${body}`;
+  });
+  return ["Document contents:", ...blocks].join("\n\n");
 }
 
 function changedSection(changed: readonly string[]): string {
@@ -122,7 +176,7 @@ export function buildArchitectureContext(
   const files = normalize(input.files);
   const changed = normalize(input.changedFiles);
 
-  return [
+  const sections = [
     changedSection(changed),
     moduleInventory(files),
     listSection(
@@ -140,5 +194,11 @@ export function buildArchitectureContext(
       files.filter((path) => COVERAGE_NAMES.has(basename(path))),
       DOCUMENT_LIMIT,
     ),
-  ].join("\n\n");
+  ];
+
+  const documents = documentSection(input.documents ?? []);
+  if (documents !== undefined) {
+    sections.push(documents);
+  }
+  return sections.join("\n\n");
 }

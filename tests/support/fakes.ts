@@ -178,6 +178,8 @@ export class FakeGit implements GitOps {
   changedPathRounds: string[][] = [];
   fileList: string[] = [];
   readonly listFilesCalls: string[] = [];
+  readonly fileContents = new Map<string, string>();
+  readonly readFileCalls: string[] = [];
   readonly countCalls: { branch: string; sinceSha: string | null }[] = [];
   readonly branches: string[] = [];
   readonly pushes: string[] = [];
@@ -226,6 +228,11 @@ export class FakeGit implements GitOps {
   async listFiles(branch: string): Promise<string[]> {
     this.listFilesCalls.push(branch);
     return this.fileList;
+  }
+
+  async readFile(_branch: string, path: string): Promise<string | undefined> {
+    this.readFileCalls.push(path);
+    return this.fileContents.get(path);
   }
 
   async isAncestor(_ancestor: string, _descendant: string): Promise<boolean> {

@@ -446,3 +446,22 @@ test("rethrows unexpected git ancestry errors", async () => {
     /exited with 128/,
   );
 });
+
+test("reads a file from a branch and tolerates a missing one", async () => {
+  const runner = new FakeRunner();
+  runner.handler = (args) =>
+    args[1] === "main:docs/adr/0001-ports.md"
+      ? { stdout: "# Ports\n" }
+      : { exitCode: 128 };
+  const repo = fakeRepo(runner);
+
+  assert.equal(
+    await repo.readFile("main", "docs/adr/0001-ports.md"),
+    "# Ports\n",
+  );
+  assert.equal(await repo.readFile("main", "docs/adr/missing.md"), undefined);
+  assert.deepEqual(runner.calls[0]!.args, [
+    "show",
+    "main:docs/adr/0001-ports.md",
+  ]);
+});

@@ -6,7 +6,11 @@ import {
   truncateDiff,
   type ArchitectureVerdict,
 } from "./architecture.js";
-import { buildArchitectureContext } from "./architecture-context.js";
+import {
+  buildArchitectureContext,
+  readableDocumentPaths,
+  type ArchitectureDocument,
+} from "./architecture-context.js";
 import { issuePolicy, type FactoryConfig } from "./config.js";
 import {
   classifyIssue,
@@ -720,13 +724,35 @@ export class Factory {
     changedFiles: readonly string[],
   ): Promise<string> {
     try {
-      return buildArchitectureContext({
-        files: await this.#git.listFiles(branch),
-        changedFiles,
-      });
+      const files = await this.#git.listFiles(branch);
+      const documents = await this.#readDocuments(
+        branch,
+        readableDocumentPaths(files),
+      );
+      return buildArchitectureContext({ files, changedFiles, documents });
     } catch (error) {
       return `Repository context is unavailable: ${errorMessage(error)}`;
     }
+  }
+
+  async #readDocuments(
+    branch: string,
+    paths: readonly string[],
+  ): Promise<ArchitectureDocument[]> {
+    const documents: ArchitectureDocument[] = [];
+    for (const path of paths) {
+      try {
+        const content = await this.#git.readFile(branch, path);
+        if (content !== undefined && content.trim() !== "") {
+          documents.push({ path, content });
+        }
+      } catch (error) {
+        this.#logger?.warn(
+          `architecture context: could not read ${path}: ${errorMessage(error)}`,
+        );
+      }
+    }
+    return documents;
   }
 
   async #fileFollowUps(

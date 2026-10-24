@@ -61,16 +61,17 @@ A Pi-native software factory:
       (`filed as #N`), persisted on the decision record.
 - [x] Follow-up triage decided: no automatic promotion. The label is informational and a human
       adds `softfac:ready` to the follow-ups worth doing, so the factory cannot feed itself.
-- [x] 217 tests, typecheck clean, `npm run build` clean.
+- [x] The architect reads the contents of the five newest decision documents (numbered ADRs
+      first, review notes excluded, 4,000 characters each) instead of only their paths.
+- [x] 221 tests, typecheck clean, `npm run build` clean.
 
 ## Next (pick up here)
 
 Nothing queued. Candidates from the ideas list, roughly in value order:
 
-1. Let the architect read the contents of the most recent ADRs, not only their paths.
-2. Per-area reviewer prompts (a bug reviewer cares about regression tests; a feature reviewer
+1. Per-area reviewer prompts (a bug reviewer cares about regression tests; a feature reviewer
    about design).
-3. Cost/token accounting per issue from Pi's session metadata.
+2. Cost/token accounting per issue from Pi's session metadata.
 
 ## Ideas / not scheduled
 
