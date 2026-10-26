@@ -89,15 +89,20 @@ A Pi-native software factory:
 
 Security bootstrap:
 
-1. Smoke-test the read-only policy Action with a compliant bug PR. Bugs need no human approval,
-   so this exercises the build and policy path without an identity split.
-2. Split identities before testing normal/feature PRs: a GitHub App (preferred for unattended
+1. Land this split. The landing PR is the first, red smoke: it builds `main` and reaches
+   `check-pr`, which rejects it because it references no issue. A red run that reaches the
+   policy code proves the workflow machinery; it does not prove the repair event.
+2. After the split is on `main`, add an Actions event policy scoped to
+   `.github/workflows/softfac-repair.yml` that allows `pull_request_target`, then merge one
+   real bug PR with a real regression test. Do not fake the regression-test checkbox. Without
+   that policy, the default public-repo block applies from 2026-12-02.
+3. Split identities before testing normal/feature PRs: a GitHub App (preferred for unattended
    operation) or a second human approver. `ponyportal2` authors every PR today, and GitHub
    forbids self-approval.
-3. Keep `bugs.autoMerge: false`.
-4. Only after a successful smoke test, protect `main` (require a PR, require approvals, no
+4. Keep `bugs.autoMerge: false`.
+5. Only after the repair event has fired, protect `main` (require a PR, require approvals, no
    force-push, no deletion). Leave the `policy` check advisory: it is PR-forgeable.
-5. Later, if server-side policy enforcement is wanted, have a GitHub App post `softfac/policy`
+6. Later, if server-side policy enforcement is wanted, have a GitHub App post `softfac/policy`
    at the verified head and bind branch protection to that app as the expected source.
 
 Then, roughly in value order:
@@ -131,3 +136,7 @@ Then, roughly in value order:
   `check-pr` — runs with `issues: write`. With `bugs.autoMerge: false` every merge is
   human-reviewed; if bug auto-merge is enabled, changes to that surface must not be unattended.
   The exact path rule is deferred until auto-merge is enabled.
+- The default public-repo Actions policy blocks `pull_request_target` from 2026-12-02 unless an
+  applicable event policy allows it. The repair workflow needs a repository policy scoped to
+  `.github/workflows/softfac-repair.yml` with `pull_request_target` in `allowed_events`; without
+  it, repair stops after that date.

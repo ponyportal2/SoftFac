@@ -126,8 +126,8 @@ moved in between — the issue is blocked rather than merged unverified.
 | **Normal** | anything else | reference with `Part of #N`, have 1 human approval | human approval pile |
 
 The "human approval pile" is the `softfac:needs-human` label plus a comment linking the PR.
-The policy action re-runs on every push, label change, review, and merge, so the required check
-turns green as soon as a human approves.
+The policy action re-runs on every push, label change, and review, so the check turns green as
+soon as a human approves.
 
 An approval only counts when it is the newest decisive review from that author, was submitted
 on the PR's current head commit, and comes from the repository owner or a login listed in
