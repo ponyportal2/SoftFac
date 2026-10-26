@@ -593,8 +593,8 @@ export class Factory {
           issue,
           kind,
           branch,
-          `Refusing to auto-merge PR #${pr.number}: the head is no longer ` +
-            `${verifiedHead} after verification: ${errorMessage(error)}`,
+          `Refusing to auto-merge PR #${pr.number} at verified head ` +
+            `${verifiedHead}: merge failed: ${errorMessage(error)}`,
           {
             reviewRounds: totalRounds,
             architecture: gate.status,

@@ -43,8 +43,8 @@ A Pi-native software factory:
 - [x] Merge gate: before a bug is auto-merged, the factory runs `check-pr`'s policy against the
       live PR. A violation or a failed check blocks the issue and leaves the PR open.
 - [x] Auto-merge is bound to the verified commit: the branch head is recorded after the gate and
-      verification and passed to `gh pr merge --match-head-commit`. A head that moved in between
-      blocks the issue instead of merging something unverified.
+      verification and passed to `gh pr merge --match-head-commit`. A failed merge — for example a
+      head that moved in between — blocks the issue instead of merging something unverified.
 - [x] Architecture follow-ups become `softfac:follow-up` issues, deduplicated against the
       retained decision history; a failed issue creation only logs a warning.
 - [x] The architect receives a repository context: changed files, module inventory, architecture

@@ -116,8 +116,8 @@ rejects a PR that drifts, and the auto-merge path calls that same check against 
 before merging. If the check fails, the factory blocks the issue and leaves the PR open — it
 never merges on the strength of the agent's own verdict. The merge is also pinned to the commit
 that was verified: the factory records the branch head after the gate and verification, pushes,
-and merges with `--match-head-commit`. If the PR head moved in between, the merge is refused and
-the issue is blocked rather than merged unverified.
+and merges with `--match-head-commit`. If the merge fails — for example because the PR head
+moved in between — the issue is blocked rather than merged unverified.
 
 | Kind | Label | PR must | Lands |
 | --- | --- | --- | --- |

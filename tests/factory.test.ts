@@ -141,7 +141,8 @@ test("a merge refused because the head moved blocks the issue", async () => {
   assert.deepEqual(tracker.merges, []);
   assert.equal(tracker.closes.length, 0);
   assert.match(tracker.blocks[0]!.reason, /Refusing to auto-merge PR #101/);
-  assert.match(tracker.blocks[0]!.reason, /head is no longer/);
+  assert.match(tracker.blocks[0]!.reason, /at verified head/);
+  assert.match(tracker.blocks[0]!.reason, /merge failed: Head commit changed/);
 });
 
 test("gives the architect the repository context", async () => {
