@@ -125,7 +125,9 @@ Then, roughly in value order:
   busy PR could hide the newest review; pagination is not implemented.
 - The architect sees the diff plus a repository outline, not the whole repository.
 - Reviewer sessions are reused per area, so a very long-lived session can still drift.
-- The repair workflow's YAML comes from the default branch, so a merged PR that edits
-  `.github/workflows/softfac-repair.yml` changes what later `closed` events run with
-  `issues: write`. With `bugs.autoMerge: false` every merge is human-reviewed; if bug auto-merge
-  is enabled, the policy must require human approval for changes under `.github/workflows/`.
+- The repair workflow builds whatever is on the default branch at the time of a later `closed`
+  event, so any merged change to the trusted policy/repair execution surface — workflow YAML,
+  `package.json`/lockfile and lifecycle scripts, build scripts, or `src/` modules imported by
+  `check-pr` — runs with `issues: write`. With `bugs.autoMerge: false` every merge is
+  human-reviewed; if bug auto-merge is enabled, changes to that surface must not be unattended.
+  The exact path rule is deferred until auto-merge is enabled.
