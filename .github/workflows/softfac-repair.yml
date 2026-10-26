@@ -1,0 +1,33 @@
+name: SoftFac PR repair
+
+on:
+  pull_request_target:
+    types: [closed]
+
+# pull_request_target runs this file from the default branch, not from the pull
+# request. The job only runs after a merge, checks out the base commit, and
+# never executes pull request code.
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.merged
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Reopen an issue closed by a non-compliant PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node dist/cli.js check-pr "${{ github.event.pull_request.number }}" --repair

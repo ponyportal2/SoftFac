@@ -2,14 +2,17 @@ name: SoftFac PR policy
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled, closed]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   pull_request_review:
     types: [submitted, dismissed, edited]
 
+# This workflow is defined by the pull request it evaluates, so it must never
+# hold a write token. Post-merge repair runs from trusted default-branch YAML
+# in softfac-repair.yml instead.
 permissions:
   contents: read
   pull-requests: read
-  issues: write
+  issues: read
 
 concurrency:
   group: softfac-policy-${{ github.event.pull_request.number }}
@@ -17,15 +20,11 @@ concurrency:
 
 jobs:
   policy:
-    # A closed PR only matters when it merged: that is the moment an issue can
-    # be closed by a non-compliant PR, which is what --repair exists for.
-    if: github.event.action != 'closed' || github.event.pull_request.merged
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          # This job holds issues: write. Checking out the default merge ref
-          # would build and run the pull request's own code with that token.
+          # Build the base commit, not the pull request's own code.
           ref: ${{ github.event.pull_request.base.sha }}
       - uses: actions/setup-node@v4
         with:
@@ -37,4 +36,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: node dist/cli.js check-pr "${{ github.event.pull_request.number }}" --repair
+        run: node dist/cli.js check-pr "${{ github.event.pull_request.number }}"
