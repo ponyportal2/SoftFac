@@ -118,18 +118,26 @@ never merges on the strength of the agent's own verdict.
 
 | Kind | Label | PR must | Lands |
 | --- | --- | --- | --- |
-| **Bug** | `bug` | close with `Fixes #N` and check the regression-test box | merged + issue closed when `bugs.autoMerge` |
+| **Bug** | `bug` | close with `Fixes #N` and check the regression-test box | merged + issue closed when `bugs.autoMerge` is on and verification is configured |
 | **Substantial** | any of `feature`, `architecture`, `epic` | reference with `Part of #N`, carry `arch:approved`, have 1 human approval | human approval pile |
 | **Normal** | anything else | reference with `Part of #N`, have 1 human approval | human approval pile |
 
 The "human approval pile" is the `softfac:needs-human` label plus a comment linking the PR.
-The policy action re-runs on every push, label change, and review, so the required check turns
-green as soon as a human approves.
+The policy action re-runs on every push, label change, review, and merge, so the required check
+turns green as soon as a human approves.
+
+An approval only counts when it is the newest review from that author, was submitted on the
+PR's current head commit, and comes from a trusted author — an `OWNER`, `MEMBER`, or
+`COLLABORATOR` of the repository, or a login listed in `review.trustedAuthors`. A later
+"changes requested" withdraws the approval, a new push invalidates it until someone
+re-approves, and bot reviews never count.
 
 **Reacting to review comments.** While an issue sits in the pile, every cycle polls its PR for
-comments and change-request reviews written by anyone other than the factory. New feedback is
-handed to the implementer as review notes, the reviewer re-reviews, the verification commands
-run again, and the result is pushed to the same branch. Handled comments are recorded by id in
+comments and change-request reviews from trusted authors. Comments from outsiders are ignored,
+so a public repository cannot steer the implementer. New feedback is handed to the implementer
+as review notes, the reviewer re-reviews, and — for substantial issues — the architecture gate
+runs again on the new commits. A rejection blocks the issue; otherwise the verification
+commands run and the result is pushed to the same branch. Handled comments are recorded by id in
 the state file, so the same comment is never implemented twice; a `MERGED` or `CLOSED` PR is
 skipped. If the reviewer still requests changes after `review.maxRounds` extra rounds, the
 issue is blocked instead. The label stays put: merging the PR or removing the label is the
@@ -138,7 +146,9 @@ human's decision, not the factory's.
 The Action runs `check-pr --repair`. When a PR violates the policy and the issue it references
 is already closed (a closing keyword landed too early, or a bug PR was merged without its
 regression test), SoftFac reopens the issue before failing the check. A compliant PR that
-closed its bug issue is left alone.
+closed its bug issue is left alone. The repair is deliberately narrow: it only touches a PR
+whose branch starts with `branchPrefix`, whose head is in the same repository, and whose issue
+still carries one of the factory's labels. Everything else is reported and left unchanged.
 
 ## Architecture reviews
 
@@ -191,7 +201,8 @@ the branch's changed files against `tdd.testPatterns`:
 
 If no file matches, the implementer gets a synthetic `changes_requested` round asking for a
 regression test. If the rounds run out, the issue is blocked. This is what makes the
-"Regression test added" checkbox in a bug PR body truthful. Other issue kinds are not gated.
+"Regression test added" checkbox in a bug PR body truthful: `check-pr` can only read the box,
+so this gate is the evidence behind it. Other issue kinds are not gated.
 
 ## Verification
 
@@ -235,9 +246,10 @@ silently ignored.
 | `architecture.requireForSubstantial` | `true` | Always review substantial changes |
 | `architecture.maxDiffChars` | `60000` | Character cap on the diff sent to the architect |
 | `review.maxRounds` | `2` | Extra implement/review rounds after the first review; also caps a human-feedback batch |
+| `review.trustedAuthors` | `[]` | Extra logins whose PR comments and approvals count |
 | `tdd.testPatterns` | see above | Glob patterns that count as test files |
 | `verification.commands` | `[]` | Commands run in the sandbox before opening a PR |
-| `bugs.autoMerge` | `true` | Merge bug PRs automatically |
+| `bugs.autoMerge` | `false` | Merge bug PRs automatically; requires at least one `verification.commands` entry |
 | `bugs.autoClose` | `true` | Close the bug issue after merging |
 | `maxIssuesPerRun` | `1` | Issues claimed per polling cycle |
 | `pollIntervalMs` | `60000` | Daemon poll interval |
@@ -267,12 +279,15 @@ invalid field fails the issue rather than guessing a verdict.
 ## GitHub Action
 
 `.github/workflows/softfac-policy.yml` builds the project and runs
-`node dist/cli.js check-pr <number> --repair` on every PR event. It requires `GH_TOKEN` (the
-default token is enough) and `issues: write` so it can reopen an issue closed by a
-non-compliant PR. It fails the check with one line per violation. Keep this workflow in the
-repository you are automating, and make the check required in branch protection — the factory's
-own merge gate covers bugs, but only branch protection stops a human from merging around the
-check.
+`node dist/cli.js check-pr <number> --repair` on every PR event. It checks out
+`github.event.pull_request.base.sha`, not the default merge ref: the job holds
+`issues: write`, and the merge ref is the pull request's own code. It requires `GH_TOKEN`
+(the default token is enough) and `issues: write` so it can reopen an issue closed by a
+non-compliant PR. The job also runs after a PR is merged, which is when a closing keyword can
+close an issue; a PR closed without merging is skipped. It fails the check with one line per
+violation. Keep this workflow in the repository you are automating, and make the check required
+in branch protection — the factory's own merge gate covers bugs, but only branch protection
+stops a human from merging around the check.
 
 ## State and logs
 
@@ -324,3 +339,7 @@ depends only on those ports. Tests drive the factory through in-memory fakes in
   drift, which is why the review loop is capped.
 - Verification commands run once, after the architecture gate; a failure blocks the issue
   instead of sending the output back to the implementer.
+- Only the PR conversation and review bodies are read. Inline review comments on a diff are
+  not fetched, so a reviewer who leaves line notes without a summary comment is not heard.
+- `MEMBER` means organization membership, not repository write access. In a large organization
+  every member is trusted; there is no narrower role check yet.

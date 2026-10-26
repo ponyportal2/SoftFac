@@ -10,12 +10,13 @@ A Pi-native software factory:
   requests changes.
 - An **architect** Pi session reviews the cumulative change on a cadence (every N commits)
   and always for substantial issues.
-- Bugs are auto-merged and auto-closed after review, but only when the live PR passes the same
-  policy check CI runs; a failed check blocks the issue instead of merging.
+- Bugs are auto-merged and auto-closed after review when `bugs.autoMerge` is on and
+  `verification.commands` is non-empty, and only when the live PR passes the same policy check
+  CI runs; a failed check blocks the issue instead of merging.
 - Substantial changes land in the human approval pile (`softfac:needs-human`).
 - A GitHub Action enforces the PR policy and reopens an issue closed by a non-compliant PR.
 
-## Current state (2026-10-24)
+## Current state (2026-10-26)
 
 - [x] Core pipeline: claim -> implement -> review loop -> architecture gate -> PR -> merge/close.
 - [x] Config parsing, labels, init scaffolding, doctor, check-pr, GitHub Action.
@@ -63,7 +64,19 @@ A Pi-native software factory:
       adds `softfac:ready` to the follow-ups worth doing, so the factory cannot feed itself.
 - [x] The architect reads the contents of the five newest decision documents (numbered ADRs
       first, review notes excluded, 4,000 characters each) instead of only their paths.
-- [x] 221 tests, typecheck clean, `npm run build` clean.
+- [x] PR feedback is trusted-only: comments and reviews from `OWNER`, `MEMBER`,
+      `COLLABORATOR`, or `review.trustedAuthors` steer the implementer; outsiders are ignored.
+- [x] Human approvals are head-bound: only the newest review per trusted author counts, and only
+      when it was submitted on the PR's current head commit. A new push drops the approval.
+- [x] A substantial feedback round re-runs the architecture gate on the new commits before the
+      push; a rejection blocks the issue and nothing is pushed.
+- [x] `bugs.autoMerge` defaults to `false`, and enabling it without a verification command is a
+      config error, so an unverified merge cannot be configured.
+- [x] The policy Action builds the trusted base commit (`pull_request.base.sha`) instead of the
+      PR merge ref, and runs after a merge so `--repair` can reopen an issue.
+- [x] `check-pr --repair` only touches a PR from the factory's branch prefix, in the same
+      repository, whose issue still carries a factory label.
+- [x] 237 tests, typecheck clean, `npm run build` clean.
 
 ## Next (pick up here)
 
@@ -77,12 +90,18 @@ Nothing queued. Candidates from the ideas list, roughly in value order:
 
 - Per-area round limits.
 - A `softfac follow-ups` command that lists the open follow-up pile.
+- Paginate reviews (or fail when the list looks truncated) instead of trusting one page.
+- Fetch inline review comments, not just the PR conversation and review bodies.
 
 ## Known limitations
 
-- Every new human comment on a waiting PR is treated as a change request, so a non-actionable
+- Every new trusted comment on a waiting PR is treated as a change request, so a non-actionable
   comment still starts a feedback round.
-- A feedback round does not re-run the architecture gate; the issue already passed it and a
-  human merges the result.
+- Inline review comments on a diff are not fetched; only the PR conversation and review bodies
+  are read.
+- `MEMBER` is organization membership, not repository write access; in a large organization
+  every member is trusted.
+- Approvals come from a single `gh pr view --json reviews` call. If that list is capped, a very
+  busy PR could hide the newest review; pagination is not implemented.
 - The architect sees the diff plus a repository outline, not the whole repository.
 - Reviewer sessions are reused per area, so a very long-lived session can still drift.
