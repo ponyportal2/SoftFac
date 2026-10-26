@@ -261,15 +261,13 @@ test("creates a follow-up issue and parses its number", async () => {
   assert.equal(runner.calls[0]!.args.includes("softfac:follow-up"), true);
 });
 
-test("delegates the merge policy to the same check CI runs", async () => {
+test("delegates the merge policy to the local check", async () => {
   const runner = new FakeRunner();
   runner.responses.push(
     {
       stdout: JSON.stringify({
         body: "Fixes #7\n\n- [x] Regression test added and failing before the fix.",
         labels: [{ name: "bug" }],
-        reviews: [],
-        headRefOid: "abc123",
         headRefName: "softfac/7",
         isCrossRepository: false,
       }),

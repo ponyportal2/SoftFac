@@ -9,7 +9,6 @@ import {
   type PolicyResult,
   type PolicyViolation,
 } from "./policy.js";
-import { isTrustedApprover } from "./trust.js";
 
 export interface RepairOptions {
   /** Only branches created by the factory may reopen an issue. */
@@ -23,13 +22,11 @@ export interface CheckPullRequestOptions {
   readonly prNumber: number;
   readonly policy: PolicyOptions;
   readonly runner?: CommandRunner;
-  readonly trustedAuthors?: readonly string[];
   readonly repair?: RepairOptions;
 }
 
 export interface CheckPullRequestResult extends PolicyResult {
   readonly issueNumber: number;
-  readonly humanApprovals: number;
   readonly architectureApproved: boolean;
   readonly issueState: "OPEN" | "CLOSED";
   readonly reopened: boolean;
@@ -39,18 +36,8 @@ export interface CheckPullRequestResult extends PolicyResult {
 interface PullRequestPayload {
   readonly body: string;
   readonly labels: readonly string[];
-  readonly reviews: readonly unknown[];
-  readonly headRefOid: string;
   readonly headRefName: string;
   readonly isCrossRepository: boolean;
-}
-
-interface ParsedReview {
-  readonly author: string;
-  readonly association: string | undefined;
-  readonly state: string;
-  readonly commit: string | undefined;
-  readonly submittedAt: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,15 +71,9 @@ function parsePullRequest(value: unknown): PullRequestPayload {
   if (typeof value["body"] !== "string") {
     throw new Error("gh pr view returned an invalid body");
   }
-  const reviews = value["reviews"] ?? [];
-  if (!Array.isArray(reviews)) {
-    throw new Error("gh pr view returned invalid reviews");
-  }
-  const headRefOid = value["headRefOid"];
   const headRefName = value["headRefName"];
   const isCrossRepository = value["isCrossRepository"];
   if (
-    typeof headRefOid !== "string" ||
     typeof headRefName !== "string" ||
     typeof isCrossRepository !== "boolean"
   ) {
@@ -101,96 +82,9 @@ function parsePullRequest(value: unknown): PullRequestPayload {
   return {
     body: value["body"],
     labels: parseLabels(value["labels"] ?? [], "gh pr view"),
-    reviews,
-    headRefOid,
     headRefName,
     isCrossRepository,
   };
-}
-
-function isBot(login: string): boolean {
-  const normalized = login.toLowerCase();
-  return normalized.endsWith("[bot]") || normalized === "github-actions";
-}
-
-function parseReviews(reviews: readonly unknown[]): ParsedReview[] {
-  const parsed: ParsedReview[] = [];
-  for (const review of reviews) {
-    if (!isRecord(review) || typeof review["state"] !== "string") {
-      continue;
-    }
-    const author = review["author"];
-    if (!isRecord(author) || typeof author["login"] !== "string") {
-      continue;
-    }
-    const association = review["authorAssociation"];
-    const commit = review["commit"];
-    const submittedAt = review["submittedAt"];
-    parsed.push({
-      author: author["login"],
-      association: typeof association === "string" ? association : undefined,
-      state: review["state"],
-      commit:
-        isRecord(commit) && typeof commit["oid"] === "string"
-          ? commit["oid"]
-          : undefined,
-      submittedAt: typeof submittedAt === "string" ? submittedAt : "",
-    });
-  }
-  return parsed;
-}
-
-const DECISIVE_REVIEW_STATES: ReadonlySet<string> = new Set([
-  "APPROVED",
-  "CHANGES_REQUESTED",
-  "DISMISSED",
-]);
-
-/**
- * GitHub keeps every review in the list, so an approval followed by a
- * change request would otherwise still count. Only the newest decisive
- * review from each author matters. A COMMENTED review neither approves nor
- * withdraws, so it does not erase an earlier decision.
- */
-function latestDecisiveReviewsByAuthor(
-  reviews: readonly ParsedReview[],
-): ParsedReview[] {
-  const latest = new Map<string, ParsedReview>();
-  for (const review of reviews) {
-    if (!DECISIVE_REVIEW_STATES.has(review.state)) {
-      continue;
-    }
-    const key = review.author.toLowerCase();
-    const current = latest.get(key);
-    if (current === undefined || review.submittedAt >= current.submittedAt) {
-      latest.set(key, review);
-    }
-  }
-  return [...latest.values()];
-}
-
-function humanApprovals(
-  reviews: readonly ParsedReview[],
-  headRefOid: string,
-  trustedAuthors: readonly string[],
-): number {
-  let approvals = 0;
-  for (const review of latestDecisiveReviewsByAuthor(reviews)) {
-    if (
-      review.state !== "APPROVED" ||
-      review.commit !== headRefOid ||
-      isBot(review.author)
-    ) {
-      continue;
-    }
-    if (
-      !isTrustedApprover(review.author, review.association, { trustedAuthors })
-    ) {
-      continue;
-    }
-    approvals += 1;
-  }
-  return approvals;
 }
 
 function parseIssueState(value: unknown): "OPEN" | "CLOSED" {
@@ -207,7 +101,6 @@ export async function checkPullRequest(
   options: CheckPullRequestOptions,
 ): Promise<CheckPullRequestResult> {
   const runner = options.runner ?? new ProcessRunner();
-  const trustedAuthors = options.trustedAuthors ?? [];
 
   const prOutput = await runner.run("gh", [
     "pr",
@@ -216,7 +109,7 @@ export async function checkPullRequest(
     "--repo",
     options.repo,
     "--json",
-    "number,body,labels,reviews,headRefOid,headRefName,isCrossRepository",
+    "body,labels,headRefName,isCrossRepository",
   ]);
   const pr = parsePullRequest(parseJson(prOutput.stdout, "gh pr view"));
 
@@ -246,11 +139,6 @@ export async function checkPullRequest(
   );
   const issueState = parseIssueState(issuePayload["state"]);
 
-  const approvals = humanApprovals(
-    parseReviews(pr.reviews),
-    pr.headRefOid,
-    trustedAuthors,
-  );
   const architectureApproved = [...pr.labels, ...issueLabels].includes(
     "arch:approved",
   );
@@ -258,10 +146,7 @@ export async function checkPullRequest(
     body: pr.body,
     labels: pr.labels,
     issue: { number: issueNumber, labels: issueLabels },
-    approvals: {
-      human: approvals,
-      architecture: architectureApproved,
-    },
+    architectureApproved,
     policy: options.policy,
   });
 
@@ -286,7 +171,6 @@ export async function checkPullRequest(
   return {
     ...result,
     issueNumber,
-    humanApprovals: approvals,
     architectureApproved,
     issueState,
     reopened,
