@@ -75,6 +75,12 @@ interface GateResult {
   readonly summary?: string;
 }
 
+interface GateAndVerifyResult {
+  readonly gate: GateResult;
+  /** Set when the gate rejects or verification fails; nothing was pushed. */
+  readonly failure?: string;
+}
+
 const VERIFICATION_OUTPUT_LINES = 20;
 const VERIFICATION_OUTPUT_CHARS = 2000;
 
@@ -371,24 +377,19 @@ export class Factory {
     // The commits produced for the feedback are still local, so the approval
     // on the remote head no longer describes them. Re-run the gate before the
     // push and let it replace the architecture label.
-    const gate = await this.#architectureGate(issue, kind, branch);
-    if (gate.status === "changes_requested") {
-      return this.#block(
-        issue,
-        kind,
-        branch,
-        `Architecture review requested changes after the human feedback on PR #${prNumber}: ${gate.summary ?? "see review"}`,
-        { reviewRounds: totalRounds, prNumber },
-      );
-    }
-
-    const verificationFailure = await this.#verify(branch);
-    if (verificationFailure !== undefined) {
-      return this.#block(issue, kind, branch, verificationFailure, {
+    const outcome = await this.#gateAndVerify(
+      issue,
+      kind,
+      branch,
+      ` after the human feedback on PR #${prNumber}`,
+    );
+    if (outcome.failure !== undefined) {
+      return this.#block(issue, kind, branch, outcome.failure, {
         reviewRounds: totalRounds,
         prNumber,
       });
     }
+    const gate = outcome.gate;
 
     await this.#git.push(branch);
     await this.#tracker.comment(
@@ -512,24 +513,14 @@ export class Factory {
     }
 
     await this.#setIssue(issue, kind, branch, "architecture");
-    const gate = await this.#architectureGate(issue, kind, branch);
-    if (gate.status === "changes_requested") {
-      return this.#block(
-        issue,
-        kind,
-        branch,
-        `Architecture review requested changes: ${gate.summary ?? "see review"}`,
-        { reviewRounds: totalRounds, architecture: "changes_requested" },
-      );
-    }
-
-    const verificationFailure = await this.#verify(branch);
-    if (verificationFailure !== undefined) {
-      return this.#block(issue, kind, branch, verificationFailure, {
+    const outcome = await this.#gateAndVerify(issue, kind, branch);
+    if (outcome.failure !== undefined) {
+      return this.#block(issue, kind, branch, outcome.failure, {
         reviewRounds: totalRounds,
-        architecture: gate.status,
+        architecture: outcome.gate.status,
       });
     }
+    const gate = outcome.gate;
 
     await this.#git.push(branch);
 
@@ -632,6 +623,30 @@ export class Factory {
       architecture: gate.status,
       prNumber: pr.number,
     };
+  }
+
+  /**
+   * The ordering is the invariant: the architecture gate sees the new commits
+   * before verification, and both run before anything is pushed. Keeping it in
+   * one place stops the initial and feedback paths from drifting.
+   */
+  async #gateAndVerify(
+    issue: Issue,
+    kind: IssueKind,
+    branch: string,
+    context = "",
+  ): Promise<GateAndVerifyResult> {
+    const gate = await this.#architectureGate(issue, kind, branch);
+    if (gate.status === "changes_requested") {
+      return {
+        gate,
+        failure: `Architecture review requested changes${context}: ${gate.summary ?? "see review"}`,
+      };
+    }
+    const verificationFailure = await this.#verify(branch);
+    return verificationFailure === undefined
+      ? { gate }
+      : { gate, failure: verificationFailure };
   }
 
   async #architectureGate(
