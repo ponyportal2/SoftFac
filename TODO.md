@@ -66,8 +66,10 @@ A Pi-native software factory:
       first, review notes excluded, 4,000 characters each) instead of only their paths.
 - [x] PR feedback is trusted-only: comments and reviews from `OWNER`, `MEMBER`,
       `COLLABORATOR`, or `review.trustedAuthors` steer the implementer; outsiders are ignored.
-- [x] Human approvals are head-bound: only the newest review per trusted author counts, and only
-      when it was submitted on the PR's current head commit. A new push drops the approval.
+- [x] Human approvals are head-bound: only the newest decisive review per author counts (a
+      comment-only review is neutral), and only when it was submitted on the PR's current head
+      commit. A new push drops the approval. Only the owner or an allowlisted login may approve;
+      organization membership is enough for feedback, not for approval.
 - [x] A substantial feedback round re-runs the architecture gate on the new commits before the
       push; a rejection blocks the issue and nothing is pushed.
 - [x] `bugs.autoMerge` defaults to `false`, and enabling it without a verification command is a
@@ -76,7 +78,7 @@ A Pi-native software factory:
       PR merge ref, and runs after a merge so `--repair` can reopen an issue.
 - [x] `check-pr --repair` only touches a PR from the factory's branch prefix, in the same
       repository, whose issue still carries a factory label.
-- [x] 237 tests, typecheck clean, `npm run build` clean.
+- [x] 241 tests, typecheck clean, `npm run build` clean.
 
 ## Next (pick up here)
 
@@ -99,8 +101,8 @@ Nothing queued. Candidates from the ideas list, roughly in value order:
   comment still starts a feedback round.
 - Inline review comments on a diff are not fetched; only the PR conversation and review bodies
   are read.
-- `MEMBER` is organization membership, not repository write access; in a large organization
-  every member is trusted.
+- `MEMBER` and `COLLABORATOR` can give feedback but cannot approve. Approval is limited to the
+  repository owner or `review.trustedAuthors`; write-access maintainers must be allowlisted.
 - Approvals come from a single `gh pr view --json reviews` call. If that list is capped, a very
   busy PR could hide the newest review; pagination is not implemented.
 - The architect sees the diff plus a repository outline, not the whole repository.

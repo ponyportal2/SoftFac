@@ -126,15 +126,18 @@ The "human approval pile" is the `softfac:needs-human` label plus a comment link
 The policy action re-runs on every push, label change, review, and merge, so the required check
 turns green as soon as a human approves.
 
-An approval only counts when it is the newest review from that author, was submitted on the
-PR's current head commit, and comes from a trusted author — an `OWNER`, `MEMBER`, or
-`COLLABORATOR` of the repository, or a login listed in `review.trustedAuthors`. A later
-"changes requested" withdraws the approval, a new push invalidates it until someone
-re-approves, and bot reviews never count.
+An approval only counts when it is the newest decisive review from that author, was submitted
+on the PR's current head commit, and comes from the repository owner or a login listed in
+`review.trustedAuthors`. A later "changes requested" or a dismissed review withdraws the
+approval; a comment-only review is neutral and leaves it in place. A new push invalidates the
+approval until someone re-approves, and bot reviews never count. Organization membership and
+collaborator status are enough to comment but not to approve: neither proves write access,
+which is the bar GitHub itself uses for a required approval.
 
 **Reacting to review comments.** While an issue sits in the pile, every cycle polls its PR for
-comments and change-request reviews from trusted authors. Comments from outsiders are ignored,
-so a public repository cannot steer the implementer. New feedback is handed to the implementer
+comments and change-request reviews from trusted authors — owners, collaborators, organization
+members, and allowlisted logins. Comments from outsiders are ignored, so a public repository
+cannot steer the implementer. New feedback is handed to the implementer
 as review notes, the reviewer re-reviews, and — for substantial issues — the architecture gate
 runs again on the new commits. A rejection blocks the issue; otherwise the verification
 commands run and the result is pushed to the same branch. Handled comments are recorded by id in
@@ -246,7 +249,7 @@ silently ignored.
 | `architecture.requireForSubstantial` | `true` | Always review substantial changes |
 | `architecture.maxDiffChars` | `60000` | Character cap on the diff sent to the architect |
 | `review.maxRounds` | `2` | Extra implement/review rounds after the first review; also caps a human-feedback batch |
-| `review.trustedAuthors` | `[]` | Extra logins whose PR comments and approvals count |
+| `review.trustedAuthors` | `[]` | Extra logins trusted to comment and approve |
 | `tdd.testPatterns` | see above | Glob patterns that count as test files |
 | `verification.commands` | `[]` | Commands run in the sandbox before opening a PR |
 | `bugs.autoMerge` | `false` | Merge bug PRs automatically; requires at least one `verification.commands` entry |
@@ -341,5 +344,6 @@ depends only on those ports. Tests drive the factory through in-memory fakes in
   instead of sending the output back to the implementer.
 - Only the PR conversation and review bodies are read. Inline review comments on a diff are
   not fetched, so a reviewer who leaves line notes without a summary comment is not heard.
-- `MEMBER` means organization membership, not repository write access. In a large organization
-  every member is trusted; there is no narrower role check yet.
+- `MEMBER` and `COLLABORATOR` can give feedback but cannot approve. Approval needs the
+  repository owner or `review.trustedAuthors`; there is no collaborator-permission lookup, so
+  a write-access maintainer who is neither must be allowlisted.

@@ -9,7 +9,7 @@ import {
   type PolicyResult,
   type PolicyViolation,
 } from "./policy.js";
-import { isTrustedAuthor } from "./trust.js";
+import { isTrustedApprover } from "./trust.js";
 
 export interface RepairOptions {
   /** Only branches created by the factory may reopen an issue. */
@@ -140,16 +140,26 @@ function parseReviews(reviews: readonly unknown[]): ParsedReview[] {
   return parsed;
 }
 
+const DECISIVE_REVIEW_STATES: ReadonlySet<string> = new Set([
+  "APPROVED",
+  "CHANGES_REQUESTED",
+  "DISMISSED",
+]);
+
 /**
  * GitHub keeps every review in the list, so an approval followed by a
- * change request would otherwise still count. Only the newest review from
- * each author matters.
+ * change request would otherwise still count. Only the newest decisive
+ * review from each author matters. A COMMENTED review neither approves nor
+ * withdraws, so it does not erase an earlier decision.
  */
-function latestReviewsByAuthor(
+function latestDecisiveReviewsByAuthor(
   reviews: readonly ParsedReview[],
 ): ParsedReview[] {
   const latest = new Map<string, ParsedReview>();
   for (const review of reviews) {
+    if (!DECISIVE_REVIEW_STATES.has(review.state)) {
+      continue;
+    }
     const key = review.author.toLowerCase();
     const current = latest.get(key);
     if (current === undefined || review.submittedAt >= current.submittedAt) {
@@ -165,7 +175,7 @@ function humanApprovals(
   trustedAuthors: readonly string[],
 ): number {
   let approvals = 0;
-  for (const review of latestReviewsByAuthor(reviews)) {
+  for (const review of latestDecisiveReviewsByAuthor(reviews)) {
     if (
       review.state !== "APPROVED" ||
       review.commit !== headRefOid ||
@@ -174,7 +184,7 @@ function humanApprovals(
       continue;
     }
     if (
-      !isTrustedAuthor(review.author, review.association, { trustedAuthors })
+      !isTrustedApprover(review.author, review.association, { trustedAuthors })
     ) {
       continue;
     }

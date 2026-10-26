@@ -39,13 +39,14 @@ function prResponse(value: unknown): CommandResult {
 function review(
   state: string,
   login: string,
-  options: { association?: string; commit?: string } = {},
+  options: { association?: string; commit?: string; submittedAt?: string } = {},
 ): Record<string, unknown> {
   return {
     state,
     author: { login },
     authorAssociation: options.association ?? "MEMBER",
     commit: { oid: options.commit ?? head },
+    submittedAt: options.submittedAt ?? "",
   };
 }
 
@@ -70,7 +71,7 @@ test("accepts a fully proven bug PR and ignores bot approvals", async () => {
         body: "Fixes #42\n\n- [x] Regression test added and failing before the fix.",
         labels: [{ name: "bug" }],
         reviews: [
-          review("APPROVED", "alice"),
+          review("APPROVED", "alice", { association: "OWNER" }),
           review("APPROVED", "dependabot[bot]", { association: "NONE" }),
         ],
       }),
@@ -131,7 +132,7 @@ test("accepts a substantial PR with architecture and human approval", async () =
       prPayload({
         body: "Part of #10",
         labels: [{ name: "feature" }],
-        reviews: [review("APPROVED", "alice")],
+        reviews: [review("APPROVED", "alice", { association: "OWNER" })],
       }),
     ),
     prResponse({ labels: [{ name: "feature" }, { name: "arch:approved" }] }),
@@ -156,9 +157,9 @@ test("counts distinct human approvers only", async () => {
       prPayload({
         body: "Part of #11",
         reviews: [
-          review("APPROVED", "alice"),
-          review("APPROVED", "alice"),
-          review("CHANGES_REQUESTED", "bob"),
+          review("APPROVED", "alice", { association: "OWNER" }),
+          review("APPROVED", "alice", { association: "OWNER" }),
+          review("CHANGES_REQUESTED", "bob", { association: "OWNER" }),
           review("APPROVED", "github-actions[bot]", { association: "NONE" }),
         ],
       }),
@@ -182,7 +183,9 @@ test("does not count an approval that predates the current head", async () => {
     prResponse(
       prPayload({
         body: "Part of #11",
-        reviews: [review("APPROVED", "alice", { commit: "old0000" })],
+        reviews: [
+          review("APPROVED", "alice", { association: "OWNER", commit: "old0000" }),
+        ],
       }),
     ),
     prResponse({ labels: [] }),
@@ -222,6 +225,29 @@ test("does not count an approval from an untrusted author", async () => {
   assert.equal(result.ok, false);
 });
 
+test("does not count an organization member's approval", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    prResponse(
+      prPayload({
+        body: "Part of #11",
+        reviews: [review("APPROVED", "alice", { association: "MEMBER" })],
+      }),
+    ),
+    prResponse({ labels: [] }),
+  );
+
+  const result = await checkPullRequest({
+    repo: "acme/widget",
+    prNumber: 111,
+    policy,
+    runner,
+  });
+
+  assert.equal(result.humanApprovals, 0);
+  assert.equal(result.ok, false);
+});
+
 test("counts only the latest review from each author", async () => {
   const runner = new FakeRunner();
   runner.responses.push(
@@ -229,8 +255,8 @@ test("counts only the latest review from each author", async () => {
       prPayload({
         body: "Part of #11",
         reviews: [
-          review("APPROVED", "alice"),
-          review("CHANGES_REQUESTED", "alice"),
+          review("APPROVED", "alice", { association: "OWNER" }),
+          review("CHANGES_REQUESTED", "alice", { association: "OWNER" }),
         ],
       }),
     ),
@@ -246,6 +272,38 @@ test("counts only the latest review from each author", async () => {
 
   assert.equal(result.humanApprovals, 0);
   assert.equal(result.ok, false);
+});
+
+test("keeps an approval when the approver later comments", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    prResponse(
+      prPayload({
+        body: "Part of #11",
+        reviews: [
+          review("APPROVED", "alice", {
+            association: "OWNER",
+            submittedAt: "2026-10-24T10:00:00Z",
+          }),
+          review("COMMENTED", "alice", {
+            association: "OWNER",
+            submittedAt: "2026-10-24T11:00:00Z",
+          }),
+        ],
+      }),
+    ),
+    prResponse({ labels: [] }),
+  );
+
+  const result = await checkPullRequest({
+    repo: "acme/widget",
+    prNumber: 112,
+    policy,
+    runner,
+  });
+
+  assert.equal(result.humanApprovals, 1);
+  assert.equal(result.ok, true);
 });
 
 test("counts an allowlisted author without a repository association", async () => {
