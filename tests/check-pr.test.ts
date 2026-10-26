@@ -26,22 +26,55 @@ const policy = {
   substantialLabels: ["feature"],
 };
 
+const head = "head0000000000000000000000000000000000";
+const repair = {
+  branchPrefix: "softfac/",
+  managedLabels: ["softfac:running"],
+};
+
 function prResponse(value: unknown): CommandResult {
   return { stdout: JSON.stringify(value), stderr: "", exitCode: 0 };
+}
+
+function review(
+  state: string,
+  login: string,
+  options: { association?: string; commit?: string } = {},
+): Record<string, unknown> {
+  return {
+    state,
+    author: { login },
+    authorAssociation: options.association ?? "MEMBER",
+    commit: { oid: options.commit ?? head },
+  };
+}
+
+function prPayload(patch: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    number: 100,
+    body: "Part of #42",
+    labels: [],
+    reviews: [],
+    headRefOid: head,
+    headRefName: "softfac/42",
+    isCrossRepository: false,
+    ...patch,
+  };
 }
 
 test("accepts a fully proven bug PR and ignores bot approvals", async () => {
   const runner = new FakeRunner();
   runner.responses.push(
-    prResponse({
-      number: 100,
-      body: "Fixes #42\n\n- [x] Regression test added and failing before the fix.",
-      labels: [{ name: "bug" }],
-      reviews: [
-        { state: "APPROVED", author: { login: "alice" } },
-        { state: "APPROVED", author: { login: "dependabot[bot]" } },
-      ],
-    }),
+    prResponse(
+      prPayload({
+        body: "Fixes #42\n\n- [x] Regression test added and failing before the fix.",
+        labels: [{ name: "bug" }],
+        reviews: [
+          review("APPROVED", "alice"),
+          review("APPROVED", "dependabot[bot]", { association: "NONE" }),
+        ],
+      }),
+    ),
     prResponse({ labels: [{ name: "bug" }] }),
   );
 
@@ -63,17 +96,14 @@ test("accepts a fully proven bug PR and ignores bot approvals", async () => {
     "--repo",
     "acme/widget",
   ]);
+  const jsonFields = runner.calls[0]!.args[runner.calls[0]!.args.indexOf("--json") + 1];
+  assert.equal(jsonFields?.includes("headRefOid"), true);
 });
 
 test("rejects a substantial PR without architecture or human approval", async () => {
   const runner = new FakeRunner();
   runner.responses.push(
-    prResponse({
-      number: 101,
-      body: "Part of #10",
-      labels: [{ name: "feature" }],
-      reviews: [],
-    }),
+    prResponse(prPayload({ body: "Part of #10", labels: [{ name: "feature" }] })),
     prResponse({ labels: [{ name: "feature" }] }),
   );
 
@@ -97,12 +127,13 @@ test("rejects a substantial PR without architecture or human approval", async ()
 test("accepts a substantial PR with architecture and human approval", async () => {
   const runner = new FakeRunner();
   runner.responses.push(
-    prResponse({
-      number: 102,
-      body: "Part of #10",
-      labels: [{ name: "feature" }],
-      reviews: [{ state: "APPROVED", author: { login: "alice" } }],
-    }),
+    prResponse(
+      prPayload({
+        body: "Part of #10",
+        labels: [{ name: "feature" }],
+        reviews: [review("APPROVED", "alice")],
+      }),
+    ),
     prResponse({ labels: [{ name: "feature" }, { name: "arch:approved" }] }),
   );
 
@@ -121,17 +152,17 @@ test("accepts a substantial PR with architecture and human approval", async () =
 test("counts distinct human approvers only", async () => {
   const runner = new FakeRunner();
   runner.responses.push(
-    prResponse({
-      number: 103,
-      body: "Part of #11",
-      labels: [],
-      reviews: [
-        { state: "APPROVED", author: { login: "alice" } },
-        { state: "APPROVED", author: { login: "alice" } },
-        { state: "CHANGES_REQUESTED", author: { login: "bob" } },
-        { state: "APPROVED", author: { login: "github-actions[bot]" } },
-      ],
-    }),
+    prResponse(
+      prPayload({
+        body: "Part of #11",
+        reviews: [
+          review("APPROVED", "alice"),
+          review("APPROVED", "alice"),
+          review("CHANGES_REQUESTED", "bob"),
+          review("APPROVED", "github-actions[bot]", { association: "NONE" }),
+        ],
+      }),
+    ),
     prResponse({ labels: [] }),
   );
 
@@ -145,16 +176,115 @@ test("counts distinct human approvers only", async () => {
   assert.equal(result.humanApprovals, 1);
 });
 
+test("does not count an approval that predates the current head", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    prResponse(
+      prPayload({
+        body: "Part of #11",
+        reviews: [review("APPROVED", "alice", { commit: "old0000" })],
+      }),
+    ),
+    prResponse({ labels: [] }),
+  );
+
+  const result = await checkPullRequest({
+    repo: "acme/widget",
+    prNumber: 108,
+    policy,
+    runner,
+  });
+
+  assert.equal(result.humanApprovals, 0);
+  assert.equal(result.ok, false);
+});
+
+test("does not count an approval from an untrusted author", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    prResponse(
+      prPayload({
+        body: "Part of #11",
+        reviews: [review("APPROVED", "mallory", { association: "NONE" })],
+      }),
+    ),
+    prResponse({ labels: [] }),
+  );
+
+  const result = await checkPullRequest({
+    repo: "acme/widget",
+    prNumber: 109,
+    policy,
+    runner,
+  });
+
+  assert.equal(result.humanApprovals, 0);
+  assert.equal(result.ok, false);
+});
+
+test("counts only the latest review from each author", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    prResponse(
+      prPayload({
+        body: "Part of #11",
+        reviews: [
+          review("APPROVED", "alice"),
+          review("CHANGES_REQUESTED", "alice"),
+        ],
+      }),
+    ),
+    prResponse({ labels: [] }),
+  );
+
+  const result = await checkPullRequest({
+    repo: "acme/widget",
+    prNumber: 110,
+    policy,
+    runner,
+  });
+
+  assert.equal(result.humanApprovals, 0);
+  assert.equal(result.ok, false);
+});
+
+test("counts an allowlisted author without a repository association", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    prResponse(
+      prPayload({
+        body: "Part of #11",
+        reviews: [review("APPROVED", "consultant", { association: "NONE" })],
+      }),
+    ),
+    prResponse({ labels: [] }),
+  );
+
+  const result = await checkPullRequest({
+    repo: "acme/widget",
+    prNumber: 111,
+    policy,
+    runner,
+    trustedAuthors: ["consultant"],
+  });
+
+  assert.equal(result.humanApprovals, 1);
+  assert.equal(result.ok, true);
+});
+
 test("reopens an issue closed by a PR that violates the policy", async () => {
   const runner = new FakeRunner();
   runner.responses.push(
+    prResponse(
+      prPayload({
+        body: "Fixes #42\n\nNo regression test declared.",
+        labels: [{ name: "bug" }],
+      }),
+    ),
     prResponse({
-      number: 105,
-      body: "Fixes #42\n\nNo regression test declared.",
-      labels: [{ name: "bug" }],
-      reviews: [],
+      labels: [{ name: "bug" }, { name: "softfac:running" }],
+      state: "CLOSED",
     }),
-    prResponse({ labels: [{ name: "bug" }], state: "CLOSED" }),
     { stdout: "", stderr: "", exitCode: 0 },
   );
 
@@ -163,7 +293,7 @@ test("reopens an issue closed by a PR that violates the policy", async () => {
     prNumber: 105,
     policy,
     runner,
-    repair: true,
+    repair,
   });
 
   assert.equal(result.ok, false);
@@ -181,13 +311,16 @@ test("reopens an issue closed by a PR that violates the policy", async () => {
 test("does not reopen a closed issue when the policy passes", async () => {
   const runner = new FakeRunner();
   runner.responses.push(
+    prResponse(
+      prPayload({
+        body: "Fixes #42\n\n- [x] Regression test added and failing before the fix.",
+        labels: [{ name: "bug" }],
+      }),
+    ),
     prResponse({
-      number: 106,
-      body: "Fixes #42\n\n- [x] Regression test added and failing before the fix.",
-      labels: [{ name: "bug" }],
-      reviews: [],
+      labels: [{ name: "bug" }, { name: "softfac:running" }],
+      state: "CLOSED",
     }),
-    prResponse({ labels: [{ name: "bug" }], state: "CLOSED" }),
   );
 
   const result = await checkPullRequest({
@@ -195,7 +328,7 @@ test("does not reopen a closed issue when the policy passes", async () => {
     prNumber: 106,
     policy,
     runner,
-    repair: true,
+    repair,
   });
 
   assert.equal(result.ok, true);
@@ -206,13 +339,16 @@ test("does not reopen a closed issue when the policy passes", async () => {
 test("leaves a closed issue alone without --repair", async () => {
   const runner = new FakeRunner();
   runner.responses.push(
+    prResponse(
+      prPayload({
+        body: "Fixes #42\n\nNo regression test declared.",
+        labels: [{ name: "bug" }],
+      }),
+    ),
     prResponse({
-      number: 107,
-      body: "Fixes #42\n\nNo regression test declared.",
-      labels: [{ name: "bug" }],
-      reviews: [],
+      labels: [{ name: "bug" }, { name: "softfac:running" }],
+      state: "CLOSED",
     }),
-    prResponse({ labels: [{ name: "bug" }], state: "CLOSED" }),
   );
 
   const result = await checkPullRequest({
@@ -226,16 +362,89 @@ test("leaves a closed issue alone without --repair", async () => {
   assert.equal(runner.calls.length, 2);
 });
 
-test("fails when the PR body has no issue reference", async () => {
+test("does not reopen an issue for a branch the factory does not own", async () => {
   const runner = new FakeRunner();
   runner.responses.push(
+    prResponse(
+      prPayload({
+        body: "Fixes #42\n\nNo regression test declared.",
+        labels: [{ name: "bug" }],
+        headRefName: "feature/42",
+      }),
+    ),
     prResponse({
-      number: 104,
-      body: "No reference",
-      labels: [],
-      reviews: [],
+      labels: [{ name: "bug" }, { name: "softfac:running" }],
+      state: "CLOSED",
     }),
   );
+
+  const result = await checkPullRequest({
+    repo: "acme/widget",
+    prNumber: 112,
+    policy,
+    runner,
+    repair,
+  });
+
+  assert.equal(result.reopened, false);
+  assert.equal(runner.calls.length, 2);
+});
+
+test("does not reopen an issue for a cross-repository PR", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    prResponse(
+      prPayload({
+        body: "Fixes #42\n\nNo regression test declared.",
+        labels: [{ name: "bug" }],
+        isCrossRepository: true,
+      }),
+    ),
+    prResponse({
+      labels: [{ name: "bug" }, { name: "softfac:running" }],
+      state: "CLOSED",
+    }),
+  );
+
+  const result = await checkPullRequest({
+    repo: "acme/widget",
+    prNumber: 113,
+    policy,
+    runner,
+    repair,
+  });
+
+  assert.equal(result.reopened, false);
+  assert.equal(runner.calls.length, 2);
+});
+
+test("does not reopen an issue the factory does not manage", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(
+    prResponse(
+      prPayload({
+        body: "Fixes #42\n\nNo regression test declared.",
+        labels: [{ name: "bug" }],
+      }),
+    ),
+    prResponse({ labels: [{ name: "bug" }], state: "CLOSED" }),
+  );
+
+  const result = await checkPullRequest({
+    repo: "acme/widget",
+    prNumber: 114,
+    policy,
+    runner,
+    repair,
+  });
+
+  assert.equal(result.reopened, false);
+  assert.equal(runner.calls.length, 2);
+});
+
+test("fails when the PR body has no issue reference", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push(prResponse(prPayload({ body: "No reference" })));
 
   await assert.rejects(
     () =>

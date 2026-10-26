@@ -37,7 +37,7 @@
   },
   "bugs": {
     "autoClose": true,
-    "autoMerge": true
+    "autoMerge": false
   },
   "maxIssuesPerRun": 1,
   "pollIntervalMs": 60000,

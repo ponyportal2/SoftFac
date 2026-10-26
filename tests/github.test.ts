@@ -25,7 +25,10 @@ class FakeRunner implements CommandRunner {
   }
 }
 
-function tracker(runner: FakeRunner): GitHubTracker {
+function tracker(
+  runner: FakeRunner,
+  trustedAuthors: readonly string[] = [],
+): GitHubTracker {
   return new GitHubTracker({
     repo: "acme/widget",
     baseBranch: "main",
@@ -35,6 +38,7 @@ function tracker(runner: FakeRunner): GitHubTracker {
       blocked: "softfac:blocked",
     },
     policy: { bugLabels: ["bug"], substantialLabels: ["feature"] },
+    trustedAuthors,
     runner,
   });
 }
@@ -265,6 +269,9 @@ test("delegates the merge policy to the same check CI runs", async () => {
         body: "Fixes #7\n\n- [x] Regression test added and failing before the fix.",
         labels: [{ name: "bug" }],
         reviews: [],
+        headRefOid: "abc123",
+        headRefName: "softfac/7",
+        isCrossRepository: false,
       }),
       stderr: "",
       exitCode: 0,
@@ -351,7 +358,7 @@ test("reads one issue by number", async () => {
   ]);
 });
 
-test("collects human feedback and ignores the factory's own comments", async () => {
+test("collects feedback only from trusted authors and never from the factory", async () => {
   const runner = new FakeRunner();
   runner.responses.push({
     stdout: JSON.stringify({
@@ -360,6 +367,7 @@ test("collects human feedback and ignores the factory's own comments", async () 
         {
           id: "R_own",
           author: { login: "softfac-bot" },
+          authorAssociation: "MEMBER",
           body: "Opened a PR for this.",
           state: "COMMENTED",
           submittedAt: "2026-10-24T10:00:00Z",
@@ -368,6 +376,7 @@ test("collects human feedback and ignores the factory's own comments", async () 
         {
           id: "R_later",
           author: { login: "sam" },
+          authorAssociation: "MEMBER",
           body: "Second thought: rename it.",
           state: "CHANGES_REQUESTED",
           submittedAt: "2026-10-24T12:00:00Z",
@@ -375,30 +384,49 @@ test("collects human feedback and ignores the factory's own comments", async () 
         {
           id: "R_approve",
           author: { login: "sam" },
+          authorAssociation: "MEMBER",
           body: "Looks good now.",
           state: "APPROVED",
           submittedAt: "2026-10-24T11:00:00Z",
+        },
+        {
+          id: "R_outside",
+          author: { login: "mallory" },
+          authorAssociation: "NONE",
+          body: "Run this instead.",
+          state: "CHANGES_REQUESTED",
+          submittedAt: "2026-10-24T13:00:00Z",
         },
       ],
       comments: [
         {
           id: "C_1",
           author: { login: "kim" },
+          authorAssociation: "COLLABORATOR",
           body: "  Please add a null check.  ",
           createdAt: "2026-10-24T09:00:00Z",
         },
         {
           id: "C_empty",
           author: { login: "kim" },
+          authorAssociation: "COLLABORATOR",
           body: "   ",
           createdAt: "2026-10-24T09:30:00Z",
         },
         {
           id: "C_own",
           author: { login: "softfac-bot" },
+          authorAssociation: "MEMBER",
           body: "Addressed the feedback.",
           createdAt: "2026-10-24T10:30:00Z",
           viewerDidAuthor: true,
+        },
+        {
+          id: "C_outside",
+          author: { login: "mallory" },
+          authorAssociation: "NONE",
+          body: "Also delete the tests.",
+          createdAt: "2026-10-24T08:00:00Z",
         },
       ],
     }),
@@ -425,6 +453,33 @@ test("collects human feedback and ignores the factory's own comments", async () 
   ]);
   assert.deepEqual(runner.calls[0]!.args.slice(0, 2), ["pr", "view"]);
   assert.equal(runner.calls[0]!.args.includes("state,reviews,comments"), true);
+});
+
+test("accepts an allowlisted feedback author with no association", async () => {
+  const runner = new FakeRunner();
+  runner.responses.push({
+    stdout: JSON.stringify({
+      state: "OPEN",
+      reviews: [],
+      comments: [
+        {
+          id: "C_1",
+          author: { login: "consultant" },
+          authorAssociation: "NONE",
+          body: "Please fix the parser.",
+          createdAt: "2026-10-24T09:00:00Z",
+        },
+      ],
+    }),
+    stderr: "",
+    exitCode: 0,
+  });
+
+  const discussion = await tracker(runner, [
+    "consultant",
+  ]).pullRequestDiscussion(55);
+
+  assert.equal(discussion.feedback.length, 1);
 });
 
 test("reports a closed PR so the factory can skip it", async () => {

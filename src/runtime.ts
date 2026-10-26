@@ -57,6 +57,7 @@ export function createRuntime(
       blocked: config.labels.blocked,
     },
     policy: issuePolicy(config),
+    trustedAuthors: config.review.trustedAuthors,
     ...(options.runner === undefined ? {} : { runner: options.runner }),
   });
   const agents = new SandcastleAgentRunner({

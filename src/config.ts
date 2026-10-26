@@ -23,6 +23,7 @@ export interface FactoryConfig {
   };
   readonly review: {
     readonly maxRounds: number;
+    readonly trustedAuthors: readonly string[];
   };
   readonly tdd: {
     readonly testPatterns: readonly string[];
@@ -72,6 +73,7 @@ const DEFAULT_CONFIG: FactoryConfig = {
   },
   review: {
     maxRounds: 2,
+    trustedAuthors: [],
   },
   tdd: {
     testPatterns: [
@@ -87,7 +89,7 @@ const DEFAULT_CONFIG: FactoryConfig = {
   },
   bugs: {
     autoClose: true,
-    autoMerge: true,
+    autoMerge: false,
   },
   maxIssuesPerRun: 1,
   pollIntervalMs: 60_000,
@@ -298,6 +300,12 @@ export function parseConfig(value: unknown): FactoryConfig {
     },
     review: {
       maxRounds: integerField(review, "maxRounds", defaults.review.maxRounds, 0),
+      trustedAuthors: stringArrayField(
+        review,
+        "trustedAuthors",
+        defaults.review.trustedAuthors,
+        "review.trustedAuthors",
+      ),
     },
     tdd: { testPatterns },
     verification: {
@@ -355,6 +363,12 @@ export function parseConfig(value: unknown): FactoryConfig {
     statePath: stringField(value, "statePath", defaults.statePath),
     logDir: stringField(value, "logDir", defaults.logDir),
   };
+
+  if (parsed.bugs.autoMerge && parsed.verification.commands.length === 0) {
+    throw new Error(
+      "config.bugs.autoMerge requires at least one command in config.verification.commands; an unverified merge is not allowed.",
+    );
+  }
 
   return parsed;
 }

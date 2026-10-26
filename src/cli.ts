@@ -341,7 +341,21 @@ async function checkPrCommand(
       prNumber,
       policy: issuePolicy(config),
       runner,
-      repair: hasFlag(args, "--repair"),
+      trustedAuthors: config.review.trustedAuthors,
+      ...(hasFlag(args, "--repair")
+        ? {
+            repair: {
+              branchPrefix: config.branchPrefix,
+              managedLabels: [
+                config.labels.ready,
+                config.labels.running,
+                config.labels.blocked,
+                config.labels.needsHuman,
+                config.labels.followUp,
+              ],
+            },
+          }
+        : {}),
     });
     if (result.reopened) {
       console.log(

@@ -18,7 +18,7 @@ test("provides defaults for an empty config", () => {
   assert.equal(config.architecture.everyCommits, 10);
   assert.equal(config.review.maxRounds, 2);
   assert.equal(config.bugs.autoClose, true);
-  assert.equal(config.bugs.autoMerge, true);
+  assert.equal(config.bugs.autoMerge, false);
   assert.equal(config.maxIssuesPerRun, 1);
   assert.equal(config.sandbox, "docker");
   assert.equal(config.agents.implementerModel, "claude-sonnet-4-6");
@@ -49,6 +49,28 @@ test("accepts verification commands", () => {
   });
 
   assert.deepEqual(config.verification.commands, ["npm ci", "npm test"]);
+});
+
+test("requires verification commands before enabling bug auto-merge", () => {
+  assert.throws(
+    () => parseConfig({ bugs: { autoMerge: true } }),
+    /autoMerge.*verification/i,
+  );
+
+  const config = parseConfig({
+    bugs: { autoMerge: true },
+    verification: { commands: ["make verify"] },
+  });
+  assert.equal(config.bugs.autoMerge, true);
+});
+
+test("trusts no extra feedback authors by default", () => {
+  assert.deepEqual(parseConfig({}).review.trustedAuthors, []);
+  assert.deepEqual(
+    parseConfig({ review: { trustedAuthors: ["consultant"] } }).review
+      .trustedAuthors,
+    ["consultant"],
+  );
 });
 
 test("rejects a non-array verification command list", () => {

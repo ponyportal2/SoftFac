@@ -9,13 +9,22 @@ import {
   type PolicyResult,
   type PolicyViolation,
 } from "./policy.js";
+import { isTrustedAuthor } from "./trust.js";
+
+export interface RepairOptions {
+  /** Only branches created by the factory may reopen an issue. */
+  readonly branchPrefix: string;
+  /** The issue must still carry one of the factory's labels. */
+  readonly managedLabels: readonly string[];
+}
 
 export interface CheckPullRequestOptions {
   readonly repo: string;
   readonly prNumber: number;
   readonly policy: PolicyOptions;
   readonly runner?: CommandRunner;
-  readonly repair?: boolean;
+  readonly trustedAuthors?: readonly string[];
+  readonly repair?: RepairOptions;
 }
 
 export interface CheckPullRequestResult extends PolicyResult {
@@ -31,6 +40,17 @@ interface PullRequestPayload {
   readonly body: string;
   readonly labels: readonly string[];
   readonly reviews: readonly unknown[];
+  readonly headRefOid: string;
+  readonly headRefName: string;
+  readonly isCrossRepository: boolean;
+}
+
+interface ParsedReview {
+  readonly author: string;
+  readonly association: string | undefined;
+  readonly state: string;
+  readonly commit: string | undefined;
+  readonly submittedAt: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -68,16 +88,99 @@ function parsePullRequest(value: unknown): PullRequestPayload {
   if (!Array.isArray(reviews)) {
     throw new Error("gh pr view returned invalid reviews");
   }
+  const headRefOid = value["headRefOid"];
+  const headRefName = value["headRefName"];
+  const isCrossRepository = value["isCrossRepository"];
+  if (
+    typeof headRefOid !== "string" ||
+    typeof headRefName !== "string" ||
+    typeof isCrossRepository !== "boolean"
+  ) {
+    throw new Error("gh pr view returned an invalid head");
+  }
   return {
     body: value["body"],
     labels: parseLabels(value["labels"] ?? [], "gh pr view"),
     reviews,
+    headRefOid,
+    headRefName,
+    isCrossRepository,
   };
 }
 
 function isBot(login: string): boolean {
   const normalized = login.toLowerCase();
   return normalized.endsWith("[bot]") || normalized === "github-actions";
+}
+
+function parseReviews(reviews: readonly unknown[]): ParsedReview[] {
+  const parsed: ParsedReview[] = [];
+  for (const review of reviews) {
+    if (!isRecord(review) || typeof review["state"] !== "string") {
+      continue;
+    }
+    const author = review["author"];
+    if (!isRecord(author) || typeof author["login"] !== "string") {
+      continue;
+    }
+    const association = review["authorAssociation"];
+    const commit = review["commit"];
+    const submittedAt = review["submittedAt"];
+    parsed.push({
+      author: author["login"],
+      association: typeof association === "string" ? association : undefined,
+      state: review["state"],
+      commit:
+        isRecord(commit) && typeof commit["oid"] === "string"
+          ? commit["oid"]
+          : undefined,
+      submittedAt: typeof submittedAt === "string" ? submittedAt : "",
+    });
+  }
+  return parsed;
+}
+
+/**
+ * GitHub keeps every review in the list, so an approval followed by a
+ * change request would otherwise still count. Only the newest review from
+ * each author matters.
+ */
+function latestReviewsByAuthor(
+  reviews: readonly ParsedReview[],
+): ParsedReview[] {
+  const latest = new Map<string, ParsedReview>();
+  for (const review of reviews) {
+    const key = review.author.toLowerCase();
+    const current = latest.get(key);
+    if (current === undefined || review.submittedAt >= current.submittedAt) {
+      latest.set(key, review);
+    }
+  }
+  return [...latest.values()];
+}
+
+function humanApprovals(
+  reviews: readonly ParsedReview[],
+  headRefOid: string,
+  trustedAuthors: readonly string[],
+): number {
+  let approvals = 0;
+  for (const review of latestReviewsByAuthor(reviews)) {
+    if (
+      review.state !== "APPROVED" ||
+      review.commit !== headRefOid ||
+      isBot(review.author)
+    ) {
+      continue;
+    }
+    if (
+      !isTrustedAuthor(review.author, review.association, { trustedAuthors })
+    ) {
+      continue;
+    }
+    approvals += 1;
+  }
+  return approvals;
 }
 
 function parseIssueState(value: unknown): "OPEN" | "CLOSED" {
@@ -90,28 +193,11 @@ function parseIssueState(value: unknown): "OPEN" | "CLOSED" {
   throw new Error("gh issue view returned an invalid state");
 }
 
-function humanApprovals(reviews: readonly unknown[]): number {
-  const approvers = new Set<string>();
-  for (const review of reviews) {
-    if (!isRecord(review) || review["state"] !== "APPROVED") {
-      continue;
-    }
-    const author = review["author"];
-    if (!isRecord(author) || typeof author["login"] !== "string") {
-      continue;
-    }
-    const login = author["login"];
-    if (!isBot(login)) {
-      approvers.add(login);
-    }
-  }
-  return approvers.size;
-}
-
 export async function checkPullRequest(
   options: CheckPullRequestOptions,
 ): Promise<CheckPullRequestResult> {
   const runner = options.runner ?? new ProcessRunner();
+  const trustedAuthors = options.trustedAuthors ?? [];
 
   const prOutput = await runner.run("gh", [
     "pr",
@@ -120,7 +206,7 @@ export async function checkPullRequest(
     "--repo",
     options.repo,
     "--json",
-    "number,body,labels,reviews",
+    "number,body,labels,reviews,headRefOid,headRefName,isCrossRepository",
   ]);
   const pr = parsePullRequest(parseJson(prOutput.stdout, "gh pr view"));
 
@@ -150,7 +236,11 @@ export async function checkPullRequest(
   );
   const issueState = parseIssueState(issuePayload["state"]);
 
-  const approvals = humanApprovals(pr.reviews);
+  const approvals = humanApprovals(
+    parseReviews(pr.reviews),
+    pr.headRefOid,
+    trustedAuthors,
+  );
   const architectureApproved = [...pr.labels, ...issueLabels].includes(
     "arch:approved",
   );
@@ -165,8 +255,14 @@ export async function checkPullRequest(
     policy: options.policy,
   });
 
+  const repair = options.repair;
+  const repairAllowed =
+    repair !== undefined &&
+    !pr.isCrossRepository &&
+    pr.headRefName.startsWith(repair.branchPrefix) &&
+    issueLabels.some((label) => repair.managedLabels.includes(label));
   const reopened =
-    options.repair === true && issueState === "CLOSED" && !result.ok;
+    repairAllowed && issueState === "CLOSED" && !result.ok;
   if (reopened) {
     await runner.run("gh", [
       "issue",

@@ -368,6 +368,20 @@ export class Factory {
       );
     }
 
+    // The commits produced for the feedback are still local, so the approval
+    // on the remote head no longer describes them. Re-run the gate before the
+    // push and let it replace the architecture label.
+    const gate = await this.#architectureGate(issue, kind, branch);
+    if (gate.status === "changes_requested") {
+      return this.#block(
+        issue,
+        kind,
+        branch,
+        `Architecture review requested changes after the human feedback on PR #${prNumber}: ${gate.summary ?? "see review"}`,
+        { reviewRounds: totalRounds, prNumber },
+      );
+    }
+
     const verificationFailure = await this.#verify(branch);
     if (verificationFailure !== undefined) {
       return this.#block(issue, kind, branch, verificationFailure, {
@@ -394,7 +408,7 @@ export class Factory {
       outcome: "pull-request",
       branch,
       reviewRounds: totalRounds,
-      architecture: "skipped",
+      architecture: gate.status,
       prNumber,
     };
   }

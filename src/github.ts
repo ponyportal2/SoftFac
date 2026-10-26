@@ -4,6 +4,7 @@ import {
   type CommandRunner,
 } from "./command.js";
 import type { PolicyOptions, PolicyResult } from "./policy.js";
+import { isTrustedAuthor } from "./trust.js";
 import type {
   CreateIssueInput,
   CreatePullRequestInput,
@@ -23,6 +24,8 @@ export interface GitHubTrackerOptions {
     readonly blocked: string;
   };
   readonly policy: PolicyOptions;
+  /** Authors who may give feedback without a repository association. */
+  readonly trustedAuthors?: readonly string[];
   readonly runner?: CommandRunner;
 }
 
@@ -100,6 +103,7 @@ function parseDiscussionState(
 function parseFeedback(
   entries: unknown,
   kind: "review" | "comment",
+  trustedAuthors: readonly string[],
 ): PullRequestFeedback[] {
   if (entries === undefined) {
     return [];
@@ -114,7 +118,9 @@ function parseFeedback(
       throw new Error(`gh pr view returned an invalid ${kind}`);
     }
     // Comments written by the factory itself (the authenticated gh user) are
-    // status updates, not review feedback.
+    // status updates, not review feedback. A personal token belongs to an
+    // OWNER or MEMBER, so the trust filter alone would let the factory answer
+    // its own "Addressed ..." comment forever.
     if (entry["viewerDidAuthor"] === true) {
       continue;
     }
@@ -129,17 +135,30 @@ function parseFeedback(
     const id = entry["id"];
     const body = entry["body"];
     const author = entry["author"];
+    const association = entry["authorAssociation"];
     const createdAt = kind === "review" ? entry["submittedAt"] : entry["createdAt"];
     if (
       typeof id !== "string" ||
       typeof body !== "string" ||
       !isRecord(author) ||
       typeof author["login"] !== "string" ||
-      typeof createdAt !== "string"
+      typeof createdAt !== "string" ||
+      (association !== undefined && typeof association !== "string")
     ) {
       throw new Error(`gh pr view returned an invalid ${kind}`);
     }
     if (body.trim() === "") {
+      continue;
+    }
+    // A public repository accepts comments from anyone. Only repository
+    // members and explicitly allowlisted logins may steer the implementer.
+    if (
+      !isTrustedAuthor(
+        author["login"],
+        typeof association === "string" ? association : undefined,
+        { trustedAuthors },
+      )
+    ) {
       continue;
     }
     items.push({
@@ -152,7 +171,10 @@ function parseFeedback(
   return items;
 }
 
-function parsePullRequestDiscussion(output: string): PullRequestDiscussion {
+function parsePullRequestDiscussion(
+  output: string,
+  trustedAuthors: readonly string[],
+): PullRequestDiscussion {
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
@@ -164,8 +186,8 @@ function parsePullRequestDiscussion(output: string): PullRequestDiscussion {
   }
 
   const feedback = [
-    ...parseFeedback(parsed["reviews"], "review"),
-    ...parseFeedback(parsed["comments"], "comment"),
+    ...parseFeedback(parsed["reviews"], "review", trustedAuthors),
+    ...parseFeedback(parsed["comments"], "comment", trustedAuthors),
   ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 
   return { state: parseDiscussionState(parsed["state"]), feedback };
@@ -176,6 +198,7 @@ export class GitHubTracker implements IssueTracker {
   readonly #baseBranch: string;
   readonly #labels: GitHubTrackerOptions["labels"];
   readonly #policy: PolicyOptions;
+  readonly #trustedAuthors: readonly string[];
   readonly #runner: CommandRunner;
 
   constructor(options: GitHubTrackerOptions) {
@@ -183,6 +206,7 @@ export class GitHubTracker implements IssueTracker {
     this.#baseBranch = options.baseBranch;
     this.#labels = options.labels;
     this.#policy = options.policy;
+    this.#trustedAuthors = options.trustedAuthors ?? [];
     this.#runner = options.runner ?? new ProcessRunner();
   }
 
@@ -435,7 +459,7 @@ export class GitHubTracker implements IssueTracker {
       "--json",
       "state,reviews,comments",
     ]);
-    return parsePullRequestDiscussion(output);
+    return parsePullRequestDiscussion(output, this.#trustedAuthors);
   }
 
   async pullRequestPolicy(prNumber: number): Promise<PolicyResult> {

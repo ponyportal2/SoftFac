@@ -33,7 +33,10 @@ function setup(
 
 test("a bug is implemented, reviewed, merged, and auto-closed", async () => {
   const target = issue(42, ["bug"]);
-  const { tracker, git, agents, state, factory } = setup([target]);
+  const { tracker, git, agents, state, factory } = setup([target], {
+    bugs: { autoMerge: true },
+    verification: { commands: ["npm test"] },
+  });
   agents.implementResults = [
     { sessionId: "impl-42", commits: 1, stdout: "implemented" },
   ];
@@ -70,7 +73,10 @@ test("a bug is implemented, reviewed, merged, and auto-closed", async () => {
 
 test("refuses to merge a bug when the live PR fails the policy", async () => {
   const target = issue(42, ["bug"]);
-  const { tracker, factory } = setup([target]);
+  const { tracker, factory } = setup([target], {
+    bugs: { autoMerge: true },
+    verification: { commands: ["npm test"] },
+  });
   tracker.policyResult = {
     ok: false,
     violations: [
@@ -94,7 +100,10 @@ test("refuses to merge a bug when the live PR fails the policy", async () => {
 
 test("does not merge when the policy check itself fails", async () => {
   const target = issue(42, ["bug"]);
-  const { tracker, factory } = setup([target]);
+  const { tracker, factory } = setup([target], {
+    bugs: { autoMerge: true },
+    verification: { commands: ["npm test"] },
+  });
   tracker.policyError = new Error("gh pr view failed");
 
   const result = await factory.processIssue(target);
@@ -415,7 +424,10 @@ test("releases the worktree when the implementer throws", async () => {
 
 test("an auto-close failure does not undo a merged bug", async () => {
   const target = issue(42, ["bug"]);
-  const { tracker, factory } = setup([target]);
+  const { tracker, factory } = setup([target], {
+    bugs: { autoMerge: true },
+    verification: { commands: ["npm test"] },
+  });
   tracker.closeError = new Error("issue is already closed");
 
   const result = await factory.processIssue(target);
@@ -559,6 +571,8 @@ test("review feedback is applied and re-reviewed using the same sessions", async
   const target = issue(42, ["bug"]);
   const { agents, factory } = setup([target], {
     review: { maxRounds: 2 },
+    bugs: { autoMerge: true },
+    verification: { commands: ["npm test"] },
   });
   agents.implementResults = [
     { sessionId: "impl-1", commits: 1, stdout: "first" },
@@ -784,7 +798,10 @@ test("falls back to branch commits when the review anchor is not an ancestor", a
 
 test("a bug without test changes gets a TDD feedback round", async () => {
   const target = issue(42, ["bug"]);
-  const { tracker, git, agents, factory } = setup([target]);
+  const { tracker, git, agents, factory } = setup([target], {
+    bugs: { autoMerge: true },
+    verification: { commands: ["npm test"] },
+  });
   git.changedPaths = ["src/fix.ts"];
   git.changedPathRounds = [
     ["src/fix.ts"],
@@ -912,6 +929,93 @@ test("addresses new human review feedback on a waiting PR", async () => {
   assert.deepEqual(state.state.issues["42"]!.addressedFeedback, [
     "comment:C_1",
   ]);
+});
+
+test("re-runs the architecture gate after substantial human feedback before pushing", async () => {
+  const { tracker, git, agents, state, factory } = setup([], {
+    verification: { commands: ["npm test"] },
+  });
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "comment:C_1",
+        author: "kim",
+        body: "Please add a null check.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  seedWaiting(state);
+  let filesWhenVerified = -1;
+  agents.onVerify = () => {
+    filesWhenVerified = git.files.length;
+  };
+
+  const results = await factory.runOnce();
+
+  assert.equal(results[0]!.architecture, "approved");
+  assert.equal(agents.architectCalls.length, 1);
+  assert.equal(git.files.length, 1);
+  assert.equal(filesWhenVerified, 1);
+  assert.deepEqual(git.pushes, ["softfac/42"]);
+});
+
+test("blocks substantial feedback when the architecture gate rejects the new commits", async () => {
+  const { tracker, git, agents, state, factory } = setup([]);
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "review:R_1",
+        author: "sam",
+        body: "Split this module.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  seedWaiting(state);
+  agents.architectResults = [
+    {
+      verdict: {
+        decision: "changes_requested",
+        summary: "The change introduces two owners.",
+        followUps: [],
+      },
+      stdout: "",
+    },
+  ];
+
+  const results = await factory.runOnce();
+
+  assert.equal(results[0]!.outcome, "blocked");
+  assert.match(tracker.blocks[0]!.reason, /two owners/i);
+  assert.deepEqual(git.pushes, []);
+  assert.equal(state.state.issues["42"]!.addressedFeedback, undefined);
+});
+
+test("skips the architecture gate when feedback is not due", async () => {
+  const { tracker, agents, state, factory } = setup([]);
+  tracker.knownIssues.push(issue(42, ["bug"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "comment:C_1",
+        author: "kim",
+        body: "Please add a null check.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  seedWaiting(state);
+
+  const results = await factory.runOnce();
+
+  assert.equal(results[0]!.architecture, "skipped");
+  assert.equal(agents.architectCalls.length, 0);
 });
 
 test("does not repeat feedback that was already addressed", async () => {
