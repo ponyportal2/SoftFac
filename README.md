@@ -126,8 +126,8 @@ moved in between — the issue is blocked rather than merged unverified.
 | **Normal** | anything else | reference with `Part of #N`, have 1 human approval | human approval pile |
 
 The "human approval pile" is the `softfac:needs-human` label plus a comment linking the PR.
-The policy action re-runs on every push, label change, review, and merge, so the required check
-turns green as soon as a human approves.
+The policy action re-runs on every push, label change, and review, so the check turns green as
+soon as a human approves.
 
 An approval only counts when it is the newest decisive review from that author, was submitted
 on the PR's current head commit, and comes from the repository owner or a login listed in
@@ -153,12 +153,13 @@ skipped. If the reviewer still requests changes after `review.maxRounds` extra r
 issue is blocked instead. The label stays put: merging the PR or removing the label is the
 human's decision, not the factory's.
 
-The Action runs `check-pr --repair`. When a PR violates the policy and the issue it references
-is already closed (a closing keyword landed too early, or a bug PR was merged without its
-regression test), SoftFac reopens the issue before failing the check. A compliant PR that
-closed its bug issue is left alone. The repair is deliberately narrow: it only touches a PR
-whose branch starts with `branchPrefix`, whose head is in the same repository, and whose issue
-still carries one of the factory's labels. Everything else is reported and left unchanged.
+The policy Action is read-only and advisory. A separate post-merge Action runs
+`check-pr --repair` from trusted default-branch YAML. When a PR violates the policy and the
+issue it references is already closed (a closing keyword landed too early, or a bug PR was
+merged without its regression test), SoftFac reopens the issue. A compliant PR that closed its
+bug issue is left alone. The repair is deliberately narrow: it only touches a PR whose branch
+starts with `branchPrefix`, whose head is in the same repository, and whose issue still carries
+one of the factory's labels. Everything else is reported and left unchanged.
 
 ## Architecture reviews
 
@@ -289,15 +290,24 @@ invalid field fails the issue rather than guessing a verdict.
 ## GitHub Action
 
 `.github/workflows/softfac-policy.yml` builds the project and runs
-`node dist/cli.js check-pr <number> --repair` on every PR event. It checks out
-`github.event.pull_request.base.sha`, not the default merge ref: the job holds
-`issues: write`, and the merge ref is the pull request's own code. It requires `GH_TOKEN`
-(the default token is enough) and `issues: write` so it can reopen an issue closed by a
-non-compliant PR. The job also runs after a PR is merged, which is when a closing keyword can
-close an issue; a PR closed without merging is skipped. It fails the check with one line per
-violation. Keep this workflow in the repository you are automating, and make the check required
-in branch protection — the factory's own merge gate covers bugs, but only branch protection
-stops a human from merging around the check.
+`node dist/cli.js check-pr <number>` on every PR and review event. It checks out
+`github.event.pull_request.base.sha`, not the default merge ref, so it builds the base
+repository's code rather than the pull request's. The workflow is defined by the pull request it
+evaluates, so it is deliberately read-only: `contents: read`, `pull-requests: read`, and
+`issues: read`. It fails the check with one line per violation.
+
+The check is advisory. A pull request can edit the workflow file and manufacture a passing
+`policy` check, so do not make it required in branch protection until a trusted identity
+produces it. For factory merges, enforcement is the local gate plus `--match-head-commit`, not
+this check.
+
+`.github/workflows/softfac-repair.yml` runs only after a merge, from `pull_request_target`.
+That event uses the default branch's copy of the workflow, not the pull request's, so this is
+the only job that holds `issues: write`. It checks out `github.event.pull_request.base.sha` (the
+base commit, not the merged code), builds the CLI, and runs
+`node dist/cli.js check-pr <number> --repair`. A PR closed without merging is skipped. Because
+GitHub is moving to block `pull_request_target` for public repositories by default, treat
+repair as best-effort: if the event is blocked, the issue stays closed.
 
 ## State and logs
 
