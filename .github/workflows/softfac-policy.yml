@@ -2,7 +2,7 @@ name: SoftFac PR policy
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, closed]
   pull_request_review:
     types: [submitted, dismissed, edited]
 
@@ -17,9 +17,16 @@ concurrency:
 
 jobs:
   policy:
+    # A closed PR only matters when it merged: that is the moment an issue can
+    # be closed by a non-compliant PR, which is what --repair exists for.
+    if: github.event.action != 'closed' || github.event.pull_request.merged
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # This job holds issues: write. Checking out the default merge ref
+          # would build and run the pull request's own code with that token.
+          ref: ${{ github.event.pull_request.base.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
