@@ -65,6 +65,8 @@ export class FakeTracker implements IssueTracker {
   policyResult: PolicyResult = { ok: true, violations: [] };
   policyError: Error | undefined;
   readonly merges: number[] = [];
+  readonly mergeHeads: string[] = [];
+  mergeError: Error | undefined;
   closeError: Error | undefined;
   readonly #prBase: number;
 
@@ -157,8 +159,15 @@ export class FakeTracker implements IssueTracker {
     return this.policyResult;
   }
 
-  async mergePullRequest(prNumber: number): Promise<void> {
+  async mergePullRequest(
+    prNumber: number,
+    expectedHead: string,
+  ): Promise<void> {
+    if (this.mergeError !== undefined) {
+      throw this.mergeError;
+    }
     this.merges.push(prNumber);
+    this.mergeHeads.push(expectedHead);
   }
 }
 

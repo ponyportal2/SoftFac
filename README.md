@@ -114,7 +114,10 @@ An issue's labels decide how its pull request may land. The policy is enforced t
 the factory builds the PR body to match, `softfac check-pr` (run by the bundled GitHub Action)
 rejects a PR that drifts, and the auto-merge path calls that same check against the live PR
 before merging. If the check fails, the factory blocks the issue and leaves the PR open — it
-never merges on the strength of the agent's own verdict.
+never merges on the strength of the agent's own verdict. The merge is also pinned to the commit
+that was verified: the factory records the branch head after the gate and verification, pushes,
+and merges with `--match-head-commit`. If the PR head moved in between, the merge is refused and
+the issue is blocked rather than merged unverified.
 
 | Kind | Label | PR must | Lands |
 | --- | --- | --- | --- |
@@ -131,8 +134,12 @@ on the PR's current head commit, and comes from the repository owner or a login 
 `review.trustedAuthors`. A later "changes requested" or a dismissed review withdraws the
 approval; a comment-only review is neutral and leaves it in place. A new push invalidates the
 approval until someone re-approves, and bot reviews never count. Organization membership and
-collaborator status are enough to comment but not to approve: neither proves write access,
-which is the bar GitHub itself uses for a required approval.
+collaborator status are enough to comment but not to approve. `gh pr view --json reviews`
+exposes `authorAssociation` but not whether the author can push to the repository — GraphQL has
+`PullRequestReview.authorCanPushToRepository`, but the `gh pr view` path used here does not.
+Rather than add a second permission lookup and its failure modes, approval is limited to the
+repository owner and `review.trustedAuthors`: the strictest reading of the signal actually
+present. A write-access maintainer who is neither must be allowlisted.
 
 **Reacting to review comments.** While an issue sits in the pile, every cycle polls its PR for
 comments and change-request reviews from trusted authors — owners, collaborators, organization

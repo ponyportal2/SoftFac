@@ -289,10 +289,10 @@ test("delegates the merge policy to the same check CI runs", async () => {
   assert.deepEqual(runner.calls[0]!.args.slice(0, 2), ["pr", "view"]);
 });
 
-test("merging uses squash and deletes the branch", async () => {
+test("merging uses squash, deletes the branch, and pins the verified head", async () => {
   const runner = new FakeRunner();
 
-  await tracker(runner).mergePullRequest(123);
+  await tracker(runner).mergePullRequest(123, "abc1234");
 
   assert.deepEqual(runner.calls[0]!.args, [
     "pr",
@@ -302,6 +302,8 @@ test("merging uses squash and deletes the branch", async () => {
     "acme/widget",
     "--squash",
     "--delete-branch",
+    "--match-head-commit",
+    "abc1234",
   ]);
 });
 

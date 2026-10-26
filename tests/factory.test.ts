@@ -37,6 +37,7 @@ test("a bug is implemented, reviewed, merged, and auto-closed", async () => {
     bugs: { autoMerge: true },
     verification: { commands: ["npm test"] },
   });
+  git.head = "verified-head-42";
   agents.implementResults = [
     { sessionId: "impl-42", commits: 1, stdout: "implemented" },
   ];
@@ -59,6 +60,7 @@ test("a bug is implemented, reviewed, merged, and auto-closed", async () => {
   assert.match(tracker.pullRequests[0]!.body, /Fixes #42/);
   assert.match(tracker.pullRequests[0]!.body, /Regression test added/i);
   assert.deepEqual(tracker.merges, [101]);
+  assert.deepEqual(tracker.mergeHeads, ["verified-head-42"]);
   assert.equal(tracker.closes.length, 1);
   assert.equal(
     tracker.labels.some((entry) => entry.labels.includes("softfac:needs-human")),
@@ -111,6 +113,35 @@ test("does not merge when the policy check itself fails", async () => {
   assert.equal(result.outcome, "blocked");
   assert.deepEqual(tracker.merges, []);
   assert.match(tracker.blocks[0]!.reason, /policy check failed: gh pr view failed/);
+});
+
+test("a merge refused because the head moved blocks the issue", async () => {
+  const target = issue(42, ["bug"]);
+  const { tracker, agents, factory } = setup([target], {
+    bugs: { autoMerge: true },
+    verification: { commands: ["npm test"] },
+  });
+  agents.implementResults = [
+    { sessionId: "impl-42", commits: 1, stdout: "implemented" },
+  ];
+  agents.reviewResults = [
+    {
+      verdict: "approved",
+      summary: "Regression is covered.",
+      findings: [],
+      sessionId: "rev-1",
+      commits: 0,
+    },
+  ];
+  tracker.mergeError = new Error("Head commit changed since verification");
+
+  const result = await factory.processIssue(target);
+
+  assert.equal(result.outcome, "blocked");
+  assert.deepEqual(tracker.merges, []);
+  assert.equal(tracker.closes.length, 0);
+  assert.match(tracker.blocks[0]!.reason, /Refusing to auto-merge PR #101/);
+  assert.match(tracker.blocks[0]!.reason, /head is no longer/);
 });
 
 test("gives the architect the repository context", async () => {

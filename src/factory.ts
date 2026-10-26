@@ -521,6 +521,9 @@ export class Factory {
       });
     }
     const gate = outcome.gate;
+    // The PR is merged against exactly this commit, not against whatever the
+    // branch points at by the time the merge runs.
+    const verifiedHead = await this.#git.headSha(branch);
 
     await this.#git.push(branch);
 
@@ -583,7 +586,22 @@ export class Factory {
         );
       }
 
-      await this.#tracker.mergePullRequest(pr.number);
+      try {
+        await this.#tracker.mergePullRequest(pr.number, verifiedHead);
+      } catch (error) {
+        return this.#block(
+          issue,
+          kind,
+          branch,
+          `Refusing to auto-merge PR #${pr.number}: the head is no longer ` +
+            `${verifiedHead} after verification: ${errorMessage(error)}`,
+          {
+            reviewRounds: totalRounds,
+            architecture: gate.status,
+            prNumber: pr.number,
+          },
+        );
+      }
       if (this.#config.bugs.autoClose) {
         try {
           await this.#tracker.close(issue, `Fixed in #${pr.number}.`);

@@ -125,7 +125,8 @@ export interface IssueTracker {
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequest>;
   pullRequestDiscussion(prNumber: number): Promise<PullRequestDiscussion>;
   pullRequestPolicy(prNumber: number): Promise<PolicyResult>;
-  mergePullRequest(prNumber: number): Promise<void>;
+  /** Merge only if the PR head is still `expectedHead`; fail otherwise. */
+  mergePullRequest(prNumber: number, expectedHead: string): Promise<void>;
 }
 
 export type BaseBranchSync =

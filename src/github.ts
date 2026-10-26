@@ -467,7 +467,10 @@ export class GitHubTracker implements IssueTracker {
     return { ok: result.ok, violations: result.violations };
   }
 
-  async mergePullRequest(prNumber: number): Promise<void> {
+  async mergePullRequest(
+    prNumber: number,
+    expectedHead: string,
+  ): Promise<void> {
     await this.#gh([
       "pr",
       "merge",
@@ -476,6 +479,8 @@ export class GitHubTracker implements IssueTracker {
       this.#repo,
       "--squash",
       "--delete-branch",
+      "--match-head-commit",
+      expectedHead,
     ]);
   }
 }
