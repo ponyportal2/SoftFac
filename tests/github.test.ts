@@ -358,18 +358,18 @@ test("reads one issue by number", async () => {
   ]);
 });
 
-test("collects feedback only from trusted authors and never from the factory", async () => {
+test("collects feedback only from trusted authors, including the operator's own comments", async () => {
   const runner = new FakeRunner();
   runner.responses.push({
     stdout: JSON.stringify({
       state: "OPEN",
       reviews: [
         {
-          id: "R_own",
-          author: { login: "softfac-bot" },
+          id: "R_operator",
+          author: { login: "operator" },
           authorAssociation: "MEMBER",
-          body: "Opened a PR for this.",
-          state: "COMMENTED",
+          body: "Prefer a map here.",
+          state: "CHANGES_REQUESTED",
           submittedAt: "2026-10-24T10:00:00Z",
           viewerDidAuthor: true,
         },
@@ -414,10 +414,10 @@ test("collects feedback only from trusted authors and never from the factory", a
           createdAt: "2026-10-24T09:30:00Z",
         },
         {
-          id: "C_own",
-          author: { login: "softfac-bot" },
+          id: "C_operator",
+          author: { login: "operator" },
           authorAssociation: "MEMBER",
-          body: "Addressed the feedback.",
+          body: "Also rename it.",
           createdAt: "2026-10-24T10:30:00Z",
           viewerDidAuthor: true,
         },
@@ -443,6 +443,18 @@ test("collects feedback only from trusted authors and never from the factory", a
       author: "kim",
       body: "Please add a null check.",
       createdAt: "2026-10-24T09:00:00Z",
+    },
+    {
+      id: "review:R_operator",
+      author: "operator",
+      body: "Prefer a map here.",
+      createdAt: "2026-10-24T10:00:00Z",
+    },
+    {
+      id: "comment:C_operator",
+      author: "operator",
+      body: "Also rename it.",
+      createdAt: "2026-10-24T10:30:00Z",
     },
     {
       id: "review:R_later",

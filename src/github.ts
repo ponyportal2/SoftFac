@@ -117,13 +117,6 @@ function parseFeedback(
     if (!isRecord(entry)) {
       throw new Error(`gh pr view returned an invalid ${kind}`);
     }
-    // Comments written by the factory itself (the authenticated gh user) are
-    // status updates, not review feedback. A personal token belongs to an
-    // OWNER or MEMBER, so the trust filter alone would let the factory answer
-    // its own "Addressed ..." comment forever.
-    if (entry["viewerDidAuthor"] === true) {
-      continue;
-    }
     if (kind === "review") {
       const state = entry["state"];
       // An approval is not a request to change anything, and a pending review
@@ -152,6 +145,8 @@ function parseFeedback(
     }
     // A public repository accepts comments from anyone. Only repository
     // members and explicitly allowlisted logins may steer the implementer.
+    // The authenticated user is not special: the factory comments on the
+    // issue, never on the PR, so a self-comment here is an operator's review.
     if (
       !isTrustedAuthor(
         author["login"],
