@@ -81,19 +81,19 @@ A Pi-native software factory:
       The PR-controlled-YAML, repair-token, and 2026-12-02 deadline problems are gone.
 - [x] `check-pr --repair` only touches a PR from the factory's branch prefix, in the same
       repository, whose issue still carries a factory label.
+- [x] `main` is protected by a repository ruleset: a pull request is required, force pushes
+      and deletions are blocked, and there are no required reviews or checks.
 - [x] 232 tests, typecheck clean, `npm run build` clean.
 
 ## Next (pick up here)
 
-1. Protect `main` with a repository ruleset or branch protection rule: require a pull request,
-   block force pushes and deletions, no required reviews or status checks.
-2. Run one real normal PR end-to-end: the factory opens it, you review the diff and merge. This
+1. Run one real normal PR end-to-end: the factory opens it, you review the diff and merge. This
    proves the PR path without the Actions layer.
-3. Keep `bugs.autoMerge: false` for several real cycles. Before enabling it, make sure
+2. Keep `bugs.autoMerge: false` for several real cycles. Before enabling it, make sure
    `verification.commands` is non-empty and watch the first few merges.
-4. Decide later whether GitHub-native required reviews are worth a second identity. Only then
+3. Decide later whether GitHub-native required reviews are worth a second identity. Only then
    reintroduce a GitHub App and the approval rule in the policy.
-5. Optional: a plain read-only CI workflow for `npm test`, typecheck, and build. Keep it
+4. Optional: a plain read-only CI workflow for `npm test`, typecheck, and build. Keep it
    separate from SoftFac policy and do not treat it as a security boundary.
 
 Then, roughly in value order:
