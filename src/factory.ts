@@ -131,7 +131,7 @@ export class Factory {
 
     for (const record of stale) {
       if (record.status === "feedback") {
-        // The issue is still in the human approval pile; only the feedback
+        // The issue is still in the human review pile; only the feedback
         // round was interrupted, so re-poll the PR instead of requeueing it.
         this.#logger?.info(
           `issue #${record.number}: will re-poll the PR for feedback after an interrupted run`,
@@ -395,7 +395,7 @@ export class Factory {
     await this.#tracker.comment(
       issue,
       `Addressed ${fresh.length} human review comment(s) on PR #${prNumber} in ` +
-        `${totalRounds} review round(s). The issue stays in the human approval pile ` +
+        `${totalRounds} review round(s). The issue stays in the human review pile ` +
         "until the PR is merged.",
     );
     await this.#setIssue(issue, kind, branch, "pull-request", {

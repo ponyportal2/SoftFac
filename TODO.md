@@ -11,16 +11,16 @@ A Pi-native software factory:
 - An **architect** Pi session reviews the cumulative change on a cadence (every N commits)
   and always for substantial issues.
 - Bugs are auto-merged and auto-closed after review when `bugs.autoMerge` is on and
-  `verification.commands` is non-empty, and only when the live PR passes the same policy check
-  CI runs; a failed check blocks the issue instead of merging.
-- Substantial changes land in the human approval pile (`softfac:needs-human`).
-- A read-only GitHub Action reports the PR policy; a separate trusted post-merge Action reopens
-  an issue closed by a non-compliant PR.
+  `verification.commands` is non-empty, and only when the live PR passes `check-pr`; a failed
+  check blocks the issue instead of merging.
+- Normal and substantial changes land in the human review pile (`softfac:needs-human`).
+- There are no GitHub Actions. `softfac check-pr` is a local command; GitHub provides the PR
+  surface and basic branch protection.
 
 ## Current state (2026-10-26)
 
 - [x] Core pipeline: claim -> implement -> review loop -> architecture gate -> PR -> merge/close.
-- [x] Config parsing, labels, init scaffolding, doctor, check-pr, GitHub Action.
+- [x] Config parsing, labels, init scaffolding, doctor, check-pr.
 - [x] File state store with atomic writes; sessions persisted across restarts.
 - [x] Architecture reviews anchored to the base branch (squash-merge safe) with persisted
       decisions fed back to the architect.
@@ -50,8 +50,8 @@ A Pi-native software factory:
       retained decision history; a failed issue creation only logs a warning.
 - [x] The architect receives a repository context: changed files, module inventory, architecture
       documents, dependency manifests, and coverage report paths, in addition to the capped diff.
-- [x] `check-pr --repair` reopens an issue that a non-compliant PR closed; a separate
-      `pull_request_target` Action runs it with `issues: write` after a merge.
+- [x] `check-pr --repair` reopens an issue that a non-compliant PR closed. It is a manual
+      recovery tool; nothing runs it automatically.
 - [x] Daemon hygiene: single-instance lock with stale-lock recovery, `SIGINT`/`SIGTERM` stop
       after the current cycle, and exponential backoff with jitter on failed cycles.
 - [x] Reviewer sessions are keyed by issue area (`reviewer:bug`, `reviewer:feature`, ...)
@@ -70,40 +70,31 @@ A Pi-native software factory:
       first, review notes excluded, 4,000 characters each) instead of only their paths.
 - [x] PR feedback is trusted-only: comments and reviews from `OWNER`, `MEMBER`,
       `COLLABORATOR`, or `review.trustedAuthors` steer the implementer; outsiders are ignored.
-- [x] Human approvals are head-bound: only the newest decisive review per author counts (a
-      comment-only review is neutral), and only when it was submitted on the PR's current head
-      commit. A new push drops the approval. Only the owner or an allowlisted login may approve;
-      organization membership is enough for feedback, not for approval.
 - [x] A substantial feedback round re-runs the architecture gate on the new commits before the
       push; a rejection blocks the issue and nothing is pushed.
 - [x] `bugs.autoMerge` defaults to `false`, and enabling it without a verification command is a
       config error, so an unverified merge cannot be configured.
-- [x] The policy Action builds the trusted base commit (`pull_request.base.sha`) instead of the
-      PR merge ref and holds no write scopes; the post-merge repair runs from trusted
-      `pull_request_target` YAML with `issues: write`.
+- [x] Human approval is no longer a policy rule. SoftFac only auto-merges bugs, so the rule could
+      not protect an automated path, and it made the manual checker impossible to satisfy when
+      the owner also authors the PR.
+- [x] Both Actions workflows were deleted, along with the `pull_request_target` event policy.
+      The PR-controlled-YAML, repair-token, and 2026-12-02 deadline problems are gone.
 - [x] `check-pr --repair` only touches a PR from the factory's branch prefix, in the same
       repository, whose issue still carries a factory label.
-- [x] 242 tests, typecheck clean, `npm run build` clean.
+- [x] 232 tests, typecheck clean, `npm run build` clean.
 
 ## Next (pick up here)
 
-Security bootstrap:
-
-1. Land this split. The landing PR is the first, red smoke: it builds `main` and reaches
-   `check-pr`, which rejects it because it references no issue. A red run that reaches the
-   policy code proves the workflow machinery; it does not prove the repair event.
-2. After the split is on `main`, add an Actions event policy scoped to
-   `.github/workflows/softfac-repair.yml` that allows `pull_request_target`, then merge one
-   real bug PR with a real regression test. Do not fake the regression-test checkbox. Without
-   that policy, the default public-repo block applies from 2026-12-02.
-3. Split identities before testing normal/feature PRs: a GitHub App (preferred for unattended
-   operation) or a second human approver. `ponyportal2` authors every PR today, and GitHub
-   forbids self-approval.
-4. Keep `bugs.autoMerge: false`.
-5. Only after the repair event has fired, protect `main` (require a PR, require approvals, no
-   force-push, no deletion). Leave the `policy` check advisory: it is PR-forgeable.
-6. Later, if server-side policy enforcement is wanted, have a GitHub App post `softfac/policy`
-   at the verified head and bind branch protection to that app as the expected source.
+1. Protect `main` with a repository ruleset or branch protection rule: require a pull request,
+   block force pushes and deletions, no required reviews or status checks.
+2. Run one real normal PR end-to-end: the factory opens it, you review the diff and merge. This
+   proves the PR path without the Actions layer.
+3. Keep `bugs.autoMerge: false` for several real cycles. Before enabling it, make sure
+   `verification.commands` is non-empty and watch the first few merges.
+4. Decide later whether GitHub-native required reviews are worth a second identity. Only then
+   reintroduce a GitHub App and the approval rule in the policy.
+5. Optional: a plain read-only CI workflow for `npm test`, typecheck, and build. Keep it
+   separate from SoftFac policy and do not treat it as a security boundary.
 
 Then, roughly in value order:
 
@@ -120,23 +111,12 @@ Then, roughly in value order:
 
 ## Known limitations
 
+- A manual merge can bypass SoftFac's policy: there is no server-side check. The operator is the
+  enforcement point. SoftFac only guarantees that it never auto-merges code it did not verify.
+- `check-pr --repair` is manual; nothing reopens an issue automatically after a bad merge.
 - Every new trusted comment on a waiting PR is treated as a change request, so a non-actionable
   comment still starts a feedback round.
 - Inline review comments on a diff are not fetched; only the PR conversation and review bodies
   are read.
-- `MEMBER` and `COLLABORATOR` can give feedback but cannot approve. Approval is limited to the
-  repository owner or `review.trustedAuthors`; write-access maintainers must be allowlisted.
-- Approvals come from a single `gh pr view --json reviews` call. If that list is capped, a very
-  busy PR could hide the newest review; pagination is not implemented.
 - The architect sees the diff plus a repository outline, not the whole repository.
 - Reviewer sessions are reused per area, so a very long-lived session can still drift.
-- The repair workflow builds whatever is on the default branch at the time of a later `closed`
-  event, so any merged change to the trusted policy/repair execution surface — workflow YAML,
-  `package.json`/lockfile and lifecycle scripts, build scripts, or `src/` modules imported by
-  `check-pr` — runs with `issues: write`. With `bugs.autoMerge: false` every merge is
-  human-reviewed; if bug auto-merge is enabled, changes to that surface must not be unattended.
-  The exact path rule is deferred until auto-merge is enabled.
-- The default public-repo Actions policy blocks `pull_request_target` from 2026-12-02 unless an
-  applicable event policy allows it. The repair workflow needs a repository policy scoped to
-  `.github/workflows/softfac-repair.yml` with `pull_request_target` in `allowed_events`; without
-  it, repair stops after that date.

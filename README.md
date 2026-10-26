@@ -10,10 +10,10 @@ reviewed, policy-checked pull request using three long-lived agent roles:
 | **Architect** | Fresh session per review | Reviews the cumulative change for overarching design decisions |
 
 Bugs are merged and closed automatically once the review gates pass and the live PR satisfies
-the same policy check CI runs. Substantial changes stop at a human approval gate. Everything the
-agents do is committed to the branch, so the pull request is the audit trail. Comments left on
-a waiting PR are fed back to the implementer, so the human reviews a moving branch rather than a
-frozen one.
+the policy check. Everything else stops in a human review pile, where the operator decides.
+Everything the agents do is committed to the branch, so the pull request is the audit trail.
+Comments left on a waiting PR are fed back to the implementer, so the human reviews a moving
+branch rather than a frozen one.
 
 ## How a run works
 
@@ -45,7 +45,7 @@ verification commands (optional) -> fail? block the issue
 push -> open PR
    |
    v
-policy check (same as CI) -- fail? block the issue, keep the PR open
+policy check (local) -- fail? block the issue, keep the PR open
    |
    v
 bug? merge + close : label softfac:needs-human
@@ -99,7 +99,7 @@ npm install
 npm run build                        # emits dist/, which the `softfac` bin points at
 npx softfac init --repo owner/repo   # writes .softfac/config.json + prompts
 # edit .softfac/config.json (repo, base branch, models, cadence)
-npx softfac labels                   # create the labels the workflow needs
+npx softfac labels                   # create the labels the factory needs
 npx softfac doctor                   # verify the git repo, gh, pi, and the sandbox
 npx softfac run --once               # process one batch
 npx softfac run                      # run continuously, polling every pollIntervalMs
@@ -110,36 +110,26 @@ prompts you have edited.
 
 ## Issue kinds and the PR policy
 
-An issue's labels decide how its pull request may land. The policy is enforced three times:
-the factory builds the PR body to match, `softfac check-pr` (run by the bundled GitHub Action)
-rejects a PR that drifts, and the auto-merge path calls that same check against the live PR
-before merging. If the check fails, the factory blocks the issue and leaves the PR open — it
-never merges on the strength of the agent's own verdict. The merge is also pinned to the commit
-that was verified: the factory records the branch head after the gate and verification, pushes,
-and merges with `--match-head-commit`. If the merge fails — for example because the PR head
-moved in between — the issue is blocked rather than merged unverified.
+An issue's labels decide how its pull request may land. The policy is enforced twice: the
+factory builds the PR body to match, and the auto-merge path runs `softfac check-pr` against
+the live PR before merging. If the check fails, the factory blocks the issue and leaves the PR
+open — it never merges on the strength of the agent's own verdict. The merge is also pinned to
+the commit that was verified: the factory records the branch head after the gate and
+verification, pushes, and merges with `--match-head-commit`. If the merge fails — for example
+because the PR head moved in between — the issue is blocked rather than merged unverified.
+
+There is no server-side policy enforcement. GitHub supplies the pull request surface and branch
+protection; the policy check is a local command. A human who merges a PR by hand can bypass it,
+so the operator is the enforcement point for manual merges. SoftFac's guarantee covers the
+merges it performs itself.
 
 | Kind | Label | PR must | Lands |
 | --- | --- | --- | --- |
 | **Bug** | `bug` | close with `Fixes #N` and check the regression-test box | merged + issue closed when `bugs.autoMerge` is on and verification is configured |
-| **Substantial** | any of `feature`, `architecture`, `epic` | reference with `Part of #N`, carry `arch:approved`, have 1 human approval | human approval pile |
-| **Normal** | anything else | reference with `Part of #N`, have 1 human approval | human approval pile |
+| **Substantial** | any of `feature`, `architecture`, `epic` | reference with `Part of #N`, carry `arch:approved` | human review pile |
+| **Normal** | anything else | reference with `Part of #N` | human review pile |
 
-The "human approval pile" is the `softfac:needs-human` label plus a comment linking the PR.
-The policy action re-runs on every push, label change, and review, so the check turns green as
-soon as a human approves.
-
-An approval only counts when it is the newest decisive review from that author, was submitted
-on the PR's current head commit, and comes from the repository owner or a login listed in
-`review.trustedAuthors`. A later "changes requested" or a dismissed review withdraws the
-approval; a comment-only review is neutral and leaves it in place. A new push invalidates the
-approval until someone re-approves, and bot reviews never count. Organization membership and
-collaborator status are enough to comment but not to approve. `gh pr view --json reviews`
-exposes `authorAssociation` but not whether the author can push to the repository — GraphQL has
-`PullRequestReview.authorCanPushToRepository`, but the `gh pr view` path used here does not.
-Rather than add a second permission lookup and its failure modes, approval is limited to the
-repository owner and `review.trustedAuthors`: the strictest reading of the signal actually
-present. A write-access maintainer who is neither must be allowlisted.
+The "human review pile" is the `softfac:needs-human` label plus a comment linking the PR.
 
 **Reacting to review comments.** While an issue sits in the pile, every cycle polls its PR for
 comments and change-request reviews from trusted authors — owners, collaborators, organization
@@ -153,13 +143,13 @@ skipped. If the reviewer still requests changes after `review.maxRounds` extra r
 issue is blocked instead. The label stays put: merging the PR or removing the label is the
 human's decision, not the factory's.
 
-The policy Action is read-only and advisory. A separate post-merge Action runs
-`check-pr --repair` from trusted default-branch YAML. When a PR violates the policy and the
-issue it references is already closed (a closing keyword landed too early, or a bug PR was
-merged without its regression test), SoftFac reopens the issue. A compliant PR that closed its
-bug issue is left alone. The repair is deliberately narrow: it only touches a PR whose branch
+`softfac check-pr --repair` is a manual recovery command. When a PR violates the policy and
+the issue it references is already closed (a closing keyword landed too early, or a bug PR was
+merged without its regression test), it reopens the issue. A compliant PR that closed its bug
+issue is left alone. The repair is deliberately narrow: it only touches a PR whose branch
 starts with `branchPrefix`, whose head is in the same repository, and whose issue still carries
-one of the factory's labels. Everything else is reported and left unchanged.
+one of the factory's labels. Everything else is reported and left unchanged. Nothing runs it
+automatically.
 
 ## Architecture reviews
 
@@ -249,7 +239,7 @@ silently ignored.
 | `labels.ready` | `softfac:ready` | Label that opts an issue into the factory |
 | `labels.running` | `softfac:running` | Applied while an issue is being processed |
 | `labels.blocked` | `softfac:blocked` | Applied when the factory gives up |
-| `labels.needsHuman` | `softfac:needs-human` | The human approval pile |
+| `labels.needsHuman` | `softfac:needs-human` | The human review pile |
 | `labels.followUp` | `softfac:follow-up` | Label on issues filed from architecture follow-ups |
 | `labels.bug` | `bug` | Classifies an issue as a bug |
 | `labels.substantial` | `feature`, `architecture`, `epic` | Classifies an issue as substantial |
@@ -257,7 +247,7 @@ silently ignored.
 | `architecture.requireForSubstantial` | `true` | Always review substantial changes |
 | `architecture.maxDiffChars` | `60000` | Character cap on the diff sent to the architect |
 | `review.maxRounds` | `2` | Extra implement/review rounds after the first review; also caps a human-feedback batch |
-| `review.trustedAuthors` | `[]` | Extra logins trusted to comment and approve |
+| `review.trustedAuthors` | `[]` | Extra logins trusted to comment |
 | `tdd.testPatterns` | see above | Glob patterns that count as test files |
 | `verification.commands` | `[]` | Commands run in the sandbox before opening a PR |
 | `bugs.autoMerge` | `false` | Merge bug PRs automatically; requires at least one `verification.commands` entry |
@@ -287,27 +277,16 @@ block and the architect with `<architecture>{...}</architecture>`. Both blocks a
 against a zod schema (verdict enum, non-empty summary, string lists); a missing block or an
 invalid field fails the issue rather than guessing a verdict.
 
-## GitHub Action
+## Branch protection
 
-`.github/workflows/softfac-policy.yml` builds the project and runs
-`node dist/cli.js check-pr <number>` on every PR and review event. It checks out
-`github.event.pull_request.base.sha`, not the default merge ref, so it builds the base
-repository's code rather than the pull request's. The workflow is defined by the pull request it
-evaluates, so it is deliberately read-only: `contents: read`, `pull-requests: read`, and
-`issues: read`. It fails the check with one line per violation.
+There are no GitHub Actions. `softfac check-pr` is a local command; GitHub supplies the pull
+request surface. Protect the base branch with a repository ruleset or branch protection rule
+that requires a pull request and blocks force pushes and deletions. Do not require reviews or
+status checks: nothing produces them, and a required check that never runs blocks every merge.
 
-The check is advisory. A pull request can edit the workflow file and manufacture a passing
-`policy` check, so do not make it required in branch protection until a trusted identity
-produces it. For factory merges, enforcement is the local gate plus `--match-head-commit`, not
-this check.
-
-`.github/workflows/softfac-repair.yml` runs only after a merge, from `pull_request_target`.
-That event uses the default branch's copy of the workflow, not the pull request's, so this is
-the only job that holds `issues: write`. It checks out `github.event.pull_request.base.sha` (the
-base commit, not the merged code), builds the CLI, and runs
-`node dist/cli.js check-pr <number> --repair`. A PR closed without merging is skipped. Because
-GitHub is moving to block `pull_request_target` for public repositories by default, treat
-repair as best-effort: if the event is blocked, the issue stays closed.
+Branch protection cannot enforce the SoftFac policy, because the policy is evaluated by a local
+command. It does keep every change on the PR path and makes history rewrites visible. For
+factory merges, enforcement is the local gate plus `--match-head-commit`.
 
 ## State and logs
 
@@ -361,6 +340,6 @@ depends only on those ports. Tests drive the factory through in-memory fakes in
   instead of sending the output back to the implementer.
 - Only the PR conversation and review bodies are read. Inline review comments on a diff are
   not fetched, so a reviewer who leaves line notes without a summary comment is not heard.
-- `MEMBER` and `COLLABORATOR` can give feedback but cannot approve. Approval needs the
-  repository owner or `review.trustedAuthors`; there is no collaborator-permission lookup, so
-  a write-access maintainer who is neither must be allowlisted.
+- A manual merge can bypass the PR policy: there is no server-side check, so the operator is
+  the enforcement point. SoftFac only guarantees that it never auto-merges code it did not
+  verify.

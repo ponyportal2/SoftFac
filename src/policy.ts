@@ -12,10 +12,7 @@ export interface PullRequestPolicyInput {
     readonly number: number;
     readonly labels: readonly string[];
   };
-  readonly approvals: {
-    readonly human: number;
-    readonly architecture: boolean;
-  };
+  readonly architectureApproved: boolean;
   readonly policy: PolicyOptions;
 }
 
@@ -24,9 +21,7 @@ export type ViolationCode =
   | "bug-missing-regression-test"
   | "substantial-must-not-auto-close"
   | "substantial-missing-architecture-approval"
-  | "substantial-missing-human-approval"
-  | "normal-must-not-auto-close"
-  | "normal-missing-human-approval";
+  | "normal-must-not-auto-close";
 
 export interface PolicyViolation {
   readonly code: ViolationCode;
@@ -114,19 +109,11 @@ export function validatePullRequest(
         ),
       );
     }
-    if (!input.approvals.architecture) {
+    if (!input.architectureApproved) {
       violations.push(
         violation(
           "substantial-missing-architecture-approval",
           "Substantial changes require the arch:approved label after an architecture review.",
-        ),
-      );
-    }
-    if (input.approvals.human < 1) {
-      violations.push(
-        violation(
-          "substantial-missing-human-approval",
-          "Substantial changes require at least one human approval.",
         ),
       );
     }
@@ -138,14 +125,6 @@ export function validatePullRequest(
         violation(
           "normal-must-not-auto-close",
           `Normal changes must reference the issue as "Part of #${input.issue.number}", not with a closing keyword.`,
-        ),
-      );
-    }
-    if (input.approvals.human < 1) {
-      violations.push(
-        violation(
-          "normal-missing-human-approval",
-          "Normal changes require at least one human approval.",
         ),
       );
     }

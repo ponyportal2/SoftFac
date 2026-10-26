@@ -31,17 +31,3 @@ export function isTrustedAuthor(
   }
   return association !== undefined && FEEDBACK_ASSOCIATIONS.has(association);
 }
-
-/**
- * An approval is a security gate, not feedback. Only the repository owner or
- * an explicitly allowlisted login counts: organization membership and even
- * collaborator status do not prove write access, which is what GitHub itself
- * requires for an approval to satisfy branch protection.
- */
-export function isTrustedApprover(
-  author: string,
-  association: string | undefined,
-  options: TrustOptions,
-): boolean {
-  return isAllowlisted(author, options) || association === "OWNER";
-}

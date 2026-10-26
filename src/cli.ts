@@ -341,7 +341,6 @@ async function checkPrCommand(
       prNumber,
       policy: issuePolicy(config),
       runner,
-      trustedAuthors: config.review.trustedAuthors,
       ...(hasFlag(args, "--repair")
         ? {
             repair: {
@@ -365,8 +364,7 @@ async function checkPrCommand(
     if (result.ok) {
       console.log(
         `Policy passed for issue #${result.issueNumber} ` +
-          `(${result.humanApprovals} human approval(s), ` +
-          `architecture ${result.architectureApproved ? "approved" : "not required"}).`,
+          `(architecture ${result.architectureApproved ? "approved" : "not required"}).`,
       );
       return 0;
     }

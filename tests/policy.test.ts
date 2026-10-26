@@ -38,12 +38,14 @@ test("substantial and normal changes only get a partial reference", () => {
   assert.equal(closingReference("normal", 7), "Part of #7");
 });
 
-function baseInput(overrides: Partial<PullRequestPolicyInput> = {}): PullRequestPolicyInput {
+function baseInput(
+  overrides: Partial<PullRequestPolicyInput> = {},
+): PullRequestPolicyInput {
   return {
     body: "",
     labels: [],
     issue: { number: 42, labels: ["bug"] },
-    approvals: { human: 0, architecture: false },
+    architectureApproved: false,
     policy,
     ...overrides,
   };
@@ -53,7 +55,6 @@ test("accepts a bug PR that closes the issue and proves a regression test", () =
   const result = validatePullRequest(
     baseInput({
       body: "Fixes #42\n\n- [x] Regression test added and failing before the fix.",
-      approvals: { human: 0, architecture: false },
     }),
   );
 
@@ -93,7 +94,7 @@ test("rejects a substantial PR that uses a closing reference", () => {
     baseInput({
       body: "Fixes #42",
       issue: { number: 42, labels: ["feature"] },
-      approvals: { human: 1, architecture: true },
+      architectureApproved: true,
     }),
   );
 
@@ -109,7 +110,6 @@ test("rejects a substantial PR without architecture approval", () => {
     baseInput({
       body: "Part of #42",
       issue: { number: 42, labels: ["architecture"] },
-      approvals: { human: 1, architecture: false },
     }),
   );
 
@@ -120,40 +120,23 @@ test("rejects a substantial PR without architecture approval", () => {
   );
 });
 
-test("rejects a substantial PR without human approval", () => {
+test("accepts a substantial PR with a partial reference and architecture approval", () => {
   const result = validatePullRequest(
     baseInput({
       body: "Part of #42",
       issue: { number: 42, labels: ["feature"] },
-      approvals: { human: 0, architecture: true },
-    }),
-  );
-
-  assert.equal(result.ok, false);
-  assert.deepEqual(
-    result.violations.map((violation) => violation.code),
-    ["substantial-missing-human-approval"],
-  );
-});
-
-test("accepts a substantial PR with partial reference and both approvals", () => {
-  const result = validatePullRequest(
-    baseInput({
-      body: "Part of #42",
-      issue: { number: 42, labels: ["feature"] },
-      approvals: { human: 1, architecture: true },
+      architectureApproved: true,
     }),
   );
 
   assert.deepEqual(result, { ok: true, violations: [] });
 });
 
-test("normal PRs require human approval but not architecture approval", () => {
+test("normal PRs need only a partial reference", () => {
   const result = validatePullRequest(
     baseInput({
       body: "Part of #42",
       issue: { number: 42, labels: ["docs"] },
-      approvals: { human: 1, architecture: false },
     }),
   );
 
@@ -165,7 +148,6 @@ test("normal PRs may not auto-close their issue", () => {
     baseInput({
       body: "Closes #42",
       issue: { number: 42, labels: ["docs"] },
-      approvals: { human: 1, architecture: false },
     }),
   );
 
