@@ -91,6 +91,56 @@ A Pi-native software factory:
       and deletions are blocked, and there are no required reviews or checks.
 - [x] 232 tests, typecheck clean, `npm run build` clean.
 
+## Live pipeline test in GameInGame (paused 2026-10-28 05:20)
+
+Two benign issues were filed to exercise the factory end to end:
+- #2 `documentation` — document the verification timing summary in `tools/testing/README.md`
+  (expects the human path: PR + `softfac:needs-human`, no merge).
+- #3 `bug` — `timingSummary` reports a negative duration when a result has no `duration_ms`
+  (expects auto-merge + auto-close).
+
+Where it stopped: the third `softfac run --once` was stopped on 2026-10-28 05:22 while the
+implementer was running its own final verification (94/105 tests, phase `godot-host`). The factory,
+pi, and the Godot test processes were terminated deliberately, so the issue never reached `#verify`.
+Nothing is lost:
+
+- Branch `softfac/3` is at `98544fa Clamp missing-duration test timing summary`; the worktree
+  `.sandcastle/worktrees/softfac-3` is clean and its diff is exactly the fix plus a regression test
+  in `tests/verification.test.mjs`.
+- `.softfac/state.json` still records issue 3 as `running`, and `.softfac/run.lock` is left over.
+  Crash recovery requeues in-flight issues on the first cycle and recovers a stale lock, so a plain
+  restart should be enough.
+- Issue #3 carries `softfac:running`; #2 still carries `softfac:ready`.
+
+Pick up here:
+
+1. `cd /c/GameInGame && softfac run --once`. Confirm the log says the issue was requeued, then watch
+   `#verify` (the full affected suite, ~15-20 min of silence — `agents.idleTimeoutSeconds` is 2700
+   for exactly this), the reviewer, and for #3 the auto-merge.
+2. If #3 does not requeue on its own: `gh issue edit 3 --remove-label softfac:running --add-label
+   softfac:ready`, and drop the `"3"` entry from `.softfac/state.json`. Only delete
+   `.softfac/run.lock` when no `softfac` process is alive.
+3. Check the merge gate actually bound the verified commit: `gh pr view <n> --json state,mergedAt`
+   and `git log --oneline main` should show the squash commit on `main`; #3 should be closed by the
+   merge.
+4. Run once more for #2. Expected: an open PR labelled `softfac:needs-human`, issue still open, no
+   merge. Read the diff, then merge it by hand — that is the normal-PR path the TODO still owes.
+5. While #2 waits, its PR is polled for trusted comments; a comment should trigger a feedback round.
+   Use that to exercise the feedback loop once, then merge.
+6. Architecture: `architecture.everyCommits: 10`, `requireForSubstantial: true`. After these runs,
+   check `.softfac/state.json` `architecture.decisions` and `docs/architecture/reviews/` to confirm
+   a review fired and that the implementer never touched the architect-owned path.
+
+Gotchas seen during the test:
+- The implementer sometimes emits `<promise>COMPLETE</promise>` and then hangs while a child
+  verification finishes; sandcastle force-completes after a 60s grace window. Judge the run by the
+  commit, not by the process exiting promptly.
+- The Godot host tests can rewrite `GameSmith-Windows/GameSmith.pck`. If it shows up dirty:
+  `git -C .sandcastle/worktrees/softfac-3 checkout -- GameSmith-Windows/GameSmith.pck`.
+- Never run two factory instances against GameInGame; they share the worktree and the lock.
+- `gh issue create --body "..."` in Git Bash eats backticks; write the body to a file and use
+  `--body-file`.
+
 ## Next (pick up here)
 
 1. Run one real normal PR end-to-end: the factory opens it, you review the diff and merge. This
