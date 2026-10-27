@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,6 +19,25 @@ import { formatStatus } from "./status.js";
 import type { ProcessResult } from "./factory.js";
 
 const CONFIG_FILE = ".softfac/config.json";
+
+/**
+ * Node resolves a module's own URL through symlinks, but leaves argv[1] as
+ * the path that was typed. Compare real paths so a linked or globally
+ * installed bin still runs instead of exiting silently.
+ */
+export function isEntryPoint(
+  entryPath: string | undefined,
+  moduleUrl: string,
+): boolean {
+  if (entryPath === undefined) {
+    return false;
+  }
+  try {
+    return moduleUrl === pathToFileURL(realpathSync(entryPath)).href;
+  } catch {
+    return false;
+  }
+}
 
 const HELP = `SoftFac
 
@@ -429,10 +449,7 @@ export async function main(
   return 1;
 }
 
-if (
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+if (isEntryPoint(process.argv[1], import.meta.url)) {
   main(process.argv.slice(2))
     .then((code) => {
       process.exitCode = code;
