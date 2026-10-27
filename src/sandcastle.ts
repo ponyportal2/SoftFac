@@ -4,6 +4,7 @@ import {
   createWorktree,
   pi,
   type AgentProvider,
+  type PiOptions,
   type Sandbox,
   type SandboxProvider,
   type Worktree,
@@ -64,6 +65,36 @@ function sandboxProvider(
   return image === undefined ? docker() : docker({ imageName: image });
 }
 
+/**
+ * Sandcastle quotes the model and session with POSIX single quotes. The
+ * no-sandbox provider runs commands through cmd.exe on Windows, which passes
+ * those quotes through literally, so pi receives "'provider/model'" and
+ * rejects it. Rebuild the same command without quotes on Windows; model ids
+ * and session ids never contain spaces.
+ */
+export function piAgent(
+  model: string,
+  options: PiOptions = {},
+  platform: NodeJS.Platform = process.platform,
+): ReturnType<typeof pi> {
+  const base = pi(model, options);
+  if (platform !== "win32") {
+    return base;
+  }
+  return {
+    ...base,
+    buildPrintCommand: ({ prompt, resumeSession }) => ({
+      command:
+        `pi -p --mode json --model ${model}` +
+        (options.thinking === undefined
+          ? ""
+          : ` --thinking ${options.thinking}`) +
+        (resumeSession === undefined ? "" : ` --session ${resumeSession}`),
+      stdin: prompt,
+    }),
+  };
+}
+
 function lastSessionId(result: {
   readonly iterations: readonly { readonly sessionId?: string }[];
 }): string | undefined {
@@ -104,9 +135,9 @@ export class SandcastleAgentRunner implements AgentRunner {
       options.agents.thinking === undefined
         ? {}
         : { thinking: options.agents.thinking };
-    this.#implementer = pi(options.agents.implementerModel, thinking);
-    this.#reviewer = pi(options.agents.reviewerModel, thinking);
-    this.#architect = pi(options.agents.architectModel, thinking);
+    this.#implementer = piAgent(options.agents.implementerModel, thinking);
+    this.#reviewer = piAgent(options.agents.reviewerModel, thinking);
+    this.#architect = piAgent(options.agents.architectModel, thinking);
   }
 
   worktreePath(branch: string): string | undefined {

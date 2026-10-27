@@ -35,6 +35,8 @@ A Pi-native software factory:
 - [x] PR bodies no longer claim a test/typecheck pass that never ran.
 - [x] The scaffolded implementer prompt asks for the project's tests and documented checks
       instead of assuming a typecheck step, and names the architect-owned docs path unambiguously.
+- [x] Windows no-sandbox runs pass the model and session to pi without POSIX quoting, which
+      cmd.exe keeps literally and pi rejects as an unknown model.
 - [x] `softfac doctor` verifies that the working directory is a git repo with an `origin` remote.
 - [x] Verification commands: `verification.commands` run sequentially in the issue's sandbox
       before the PR opens, stop at the first failure, and block the issue with the exit code and
