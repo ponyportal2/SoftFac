@@ -33,6 +33,27 @@ test("provides defaults for an empty config", () => {
   ]);
 });
 
+test("leaves the agent idle timeout to the runner by default", () => {
+  assert.equal(parseConfig({}).agents.idleTimeoutSeconds, undefined);
+});
+
+test("parses an explicit agent idle timeout", () => {
+  const config = parseConfig({ agents: { idleTimeoutSeconds: 2700 } });
+
+  assert.equal(config.agents.idleTimeoutSeconds, 2700);
+});
+
+test("rejects a non-positive agent idle timeout", () => {
+  assert.throws(
+    () => parseConfig({ agents: { idleTimeoutSeconds: 0 } }),
+    /config\.agents\.idleTimeoutSeconds must be an integer >= 1/,
+  );
+  assert.throws(
+    () => parseConfig({ agents: { idleTimeoutSeconds: 1.5 } }),
+    /config\.agents\.idleTimeoutSeconds must be an integer >= 1/,
+  );
+});
+
 test("allows overriding the test file patterns", () => {
   const config = parseConfig({ tdd: { testPatterns: ["spec/**"] } });
 
