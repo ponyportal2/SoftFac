@@ -22,6 +22,14 @@ test("scaffolds config, prompts, and review directories", async () => {
       "utf8",
     );
     assert.match(implementer, /\{\{ISSUE_NUMBER\}\}/);
+    // Projects without a typecheck step should not be told to run one, and the
+    // architect-owned path must read as one path, not a list of three words.
+    assert.doesNotMatch(implementer, /typecheck/);
+    assert.match(
+      implementer,
+      /Run the project's tests and any documented checks before you finish\./,
+    );
+    assert.match(implementer, /Do not edit `docs\/architecture\/reviews`/);
     const reviewer = await readFile(
       join(dir, ".softfac/prompts/reviewer.md"),
       "utf8",
