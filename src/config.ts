@@ -43,6 +43,8 @@ export interface FactoryConfig {
     readonly reviewerModel: string;
     readonly architectModel: string;
     readonly thinking?: ThinkingLevel;
+    /** Seconds without agent output before the run fails; the runner default applies when omitted. */
+    readonly idleTimeoutSeconds?: number;
   };
   readonly prompts: {
     readonly implementer: string;
@@ -262,6 +264,15 @@ export function parseConfig(value: unknown): FactoryConfig {
     );
   }
 
+  const idleTimeoutSeconds = agents["idleTimeoutSeconds"];
+  if (
+    idleTimeoutSeconds !== undefined &&
+    (!Number.isInteger(idleTimeoutSeconds) ||
+      (idleTimeoutSeconds as number) < 1)
+  ) {
+    throw new Error("config.agents.idleTimeoutSeconds must be an integer >= 1");
+  }
+
   const parsed: FactoryConfig = {
     repo: stringField(value, "repo", defaults.repo),
     baseBranch: stringField(value, "baseBranch", defaults.baseBranch),
@@ -350,6 +361,9 @@ export function parseConfig(value: unknown): FactoryConfig {
         defaults.agents.architectModel,
       ),
       ...(thinking === undefined ? {} : { thinking: thinking as ThinkingLevel }),
+      ...(idleTimeoutSeconds === undefined
+        ? {}
+        : { idleTimeoutSeconds: idleTimeoutSeconds as number }),
     },
     prompts: {
       implementer: stringField(

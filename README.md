@@ -257,6 +257,7 @@ silently ignored.
 | `sandbox` | `docker` | `docker`, `podman`, or `no-sandbox` |
 | `agents.*Model` | `claude-sonnet-4-6` / `claude-opus-4-8` | Model per role |
 | `agents.thinking` | unset | Thinking level for all roles |
+| `agents.idleTimeoutSeconds` | runner default (600) | Silence before a run is killed; raise it for long verification commands |
 | `prompts.*` | `.softfac/prompts/*.md` | Prompt templates |
 | `statePath` | `.softfac/state.json` | Durable state |
 | `logDir` | `.softfac/logs` | Run logs |

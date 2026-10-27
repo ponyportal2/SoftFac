@@ -43,6 +43,7 @@ export interface SandcastleAgentRunnerOptions {
     readonly reviewerModel: string;
     readonly architectModel: string;
     readonly thinking?: ThinkingLevel;
+    readonly idleTimeoutSeconds?: number;
   };
   readonly prompts: {
     readonly implementer: string;
@@ -121,6 +122,7 @@ export class SandcastleAgentRunner implements AgentRunner {
   readonly #architect: AgentProvider;
   readonly #prompts: SandcastleAgentRunnerOptions["prompts"];
   readonly #worktrees: WorktreeRegistry;
+  readonly #idleTimeoutSeconds: number | undefined;
   readonly #openWorktrees = new Map<string, Worktree>();
   readonly #sandboxes = new Map<string, Sandbox>();
 
@@ -130,6 +132,7 @@ export class SandcastleAgentRunner implements AgentRunner {
     this.#sandbox = sandboxProvider(options.sandbox, options.sandboxImage);
     this.#prompts = options.prompts;
     this.#worktrees = options.worktrees;
+    this.#idleTimeoutSeconds = options.agents.idleTimeoutSeconds;
 
     const thinking =
       options.agents.thinking === undefined
@@ -142,6 +145,17 @@ export class SandcastleAgentRunner implements AgentRunner {
 
   worktreePath(branch: string): string | undefined {
     return this.#openWorktrees.get(branch)?.worktreePath;
+  }
+
+  /**
+   * A long verification command produces no agent events while it runs, so the
+   * runner's default idle window can kill a healthy run. Only override it when
+   * the project asks for a longer one.
+   */
+  #timeouts(): { idleTimeoutSeconds?: number } {
+    return this.#idleTimeoutSeconds === undefined
+      ? {}
+      : { idleTimeoutSeconds: this.#idleTimeoutSeconds };
   }
 
   async #worktree(branch: string): Promise<Worktree> {
@@ -231,6 +245,7 @@ export class SandcastleAgentRunner implements AgentRunner {
       },
       maxIterations: 1,
       name: `implement-${input.issue.number}`,
+      ...this.#timeouts(),
       ...(input.sessionId === undefined
         ? {}
         : { resumeSession: input.sessionId }),
@@ -256,6 +271,7 @@ export class SandcastleAgentRunner implements AgentRunner {
       },
       maxIterations: 1,
       name: `review-${input.issue.number}`,
+      ...this.#timeouts(),
       ...(input.sessionId === undefined
         ? {}
         : { resumeSession: input.sessionId }),
@@ -287,6 +303,7 @@ export class SandcastleAgentRunner implements AgentRunner {
       },
       maxIterations: 1,
       name: `architect-${input.issue.number}`,
+      ...this.#timeouts(),
     });
 
     return {
