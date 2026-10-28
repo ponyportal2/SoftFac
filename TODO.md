@@ -154,8 +154,11 @@ Later on 2026-10-28 the three remaining paths ran:
   `git rebase --onto <remote head> <old base> softfac/8`.
   The retry then ran clean: `a0d1613 Document verifier test listing` -> reviewer approved ->
   `ae6dc13 arch: review a0d1613` -> guard passed -> pushed `c855e09..ae6dc13` as a fast-forward.
-  Verification failed once on `package:contents` ("A test action is already pending"); the same
-  test passed in 62s on a re-run, so the failure was flaky and unrelated. PR #9 merged and #8
+  Verification failed once on `package:contents` ("A test action is already pending"). The runner's
+  `_bridge_action` gave up after 200 x 50ms and returned the still-`pending` answer, so the next
+  dispatch was rejected and the assertion blamed the action after the one that stalled; `release`'s
+  result was discarded as well. Fixed in GameInGame: poll to the deadline, return
+  `{"ok": false, "timed_out": true}` naming the action, and assert `release`. PR #9 merged and #8
   closed by hand.
 
 Remaining, in order:
