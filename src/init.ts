@@ -59,6 +59,10 @@ Use git to inspect the branch diff against {{BASE_BRANCH}}. Verify:
 - unnecessary scope, security, and maintainability problems
 - whether the implementation answers the issue
 
+Files under \`docs/architecture/reviews\` belong to the architect, not to the implementer.
+They record decisions and are expected on a branch under review; never ask for them to be
+removed or changed.
+
 Be strict but do not invent requirements. If changes are required, list
 specific, actionable findings. Your final answer must contain exactly one
 block in this form:
