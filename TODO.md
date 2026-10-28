@@ -180,4 +180,7 @@ Then, roughly in value order:
 - The architect sees the diff plus a repository outline, not the whole repository.
 - No-sandbox runs share the host process table, so an implementer can kill the factory or the
   verifier. The prompt rule is the only guard; a real sandbox would be needed to enforce it.
+- Crash recovery requeues the issue and rewrites its label, but the same cycle may still list no
+  ready issues while GitHub's label index catches up. A daemon picks it up on the next cycle; with
+  `--once` the run looks like a no-op and needs a second invocation.
 - Reviewer sessions are reused per area, so a very long-lived session can still drift.

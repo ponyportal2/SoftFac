@@ -666,6 +666,37 @@ test("blocks when review feedback produces no new commits", async () => {
   assert.equal(tracker.pullRequests.length, 0);
 });
 
+test("continues when the branch already holds the work and the implementer adds nothing", async () => {
+  const target = issue(42, ["bug"]);
+  const { tracker, git, agents, factory } = setup([target]);
+  // The interrupted run committed the fix; this run has nothing left to add.
+  git.commitsSince = 1;
+  agents.implementResults = [
+    { sessionId: "impl-1", commits: 0, stdout: "already committed" },
+  ];
+  agents.reviewResults = [
+    {
+      verdict: "approved",
+      summary: "The fix is on the branch.",
+      findings: [],
+      sessionId: "rev-1",
+      commits: 0,
+    },
+  ];
+
+  const result = await factory.processIssue(target);
+
+  assert.equal(result.outcome, "pull-request");
+  assert.equal(tracker.blocks.length, 0);
+  assert.equal(agents.reviewCalls.length, 1);
+  assert.equal(
+    git.countCalls.some(
+      (call) => call.branch === "softfac/42" && call.sinceSha === "main",
+    ),
+    true,
+  );
+});
+
 test("blocks when review still requests changes after the round limit", async () => {
   const target = issue(42, ["bug"]);
   const { tracker, agents, factory } = setup([target], {

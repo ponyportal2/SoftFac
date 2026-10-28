@@ -431,11 +431,19 @@ export class Factory {
     await this.#remember("implementer", issue.number, implementation.sessionId);
 
     if (implementation.commits <= 0) {
-      return this.#block(
-        issue,
-        kind,
-        branch,
-        `Implementer produced no commits on ${branch}.`,
+      // A resumed issue already carries the work from the interrupted run, so
+      // the branch, not this run's commit count, decides whether work exists.
+      const existing = await this.#git.countCommits(branch, this.#config.baseBranch);
+      if (existing <= 0) {
+        return this.#block(
+          issue,
+          kind,
+          branch,
+          `Implementer produced no commits on ${branch}.`,
+        );
+      }
+      this.#logger?.info(
+        `issue #${issue.number}: no new commits; continuing with ${existing} commit(s) already on ${branch}`,
       );
     }
 
