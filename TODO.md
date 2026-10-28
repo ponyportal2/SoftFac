@@ -162,17 +162,21 @@ Later on 2026-10-28 the three remaining paths ran:
   closed by hand.
   That block also exposed the missing recovery for a feedback round: the commits stayed local, the
   comment stayed fresh, and a requeue asked for the same change again and blocked on "no commits".
-  The record now keeps `feedbackBase`, the head the round started from, so a poll that finds the
-  branch past it resumes the round (review, gate, push) instead of implementing the comment twice.
-  `#addressFeedback` also releases its worktree in a `finally` like the initial path, and
+  The record keeps `feedbackBase` and `feedbackPending`, the head and ids the round started from,
+  so a poll that finds the branch past the base resumes the round (review, gate, push) for those
+  ids only; a comment that arrived meanwhile opens the next round instead of being marked addressed
+  without ever reaching an implementer. Resume also requires the saved base to still be an
+  ancestor, so a reset branch blocks instead of being verified as this round's work.
+  `#addressFeedback` releases its worktree in a `finally` like the initial path, and
   `recoverInterrupted` returns only the issues it actually requeued.
 
 Remaining, in order:
 
 1. Keep `bugs.autoMerge: false` until a few more real merges have been watched.
 2. Watch the first feedback round that blocks on the gate: the next poll should log
-   `resuming the feedback round from <sha>` and push the existing head without a second
-   implementation.
+   `resuming the feedback round from <base> at <head>` and push the existing head without a
+   second implementation. If a new comment lands during that round, only the original ids should
+   be marked addressed.
 
 Gotchas seen during the test:
 - The implementer sometimes emits `<promise>COMPLETE</promise>` and then hangs while a child

@@ -33,6 +33,11 @@ export interface IssueRecord {
    * must verify that head instead of implementing the same comment again.
    */
   readonly feedbackBase?: string;
+  /**
+   * Feedback ids the round that started at {@link feedbackBase} was opened for.
+   * A comment that arrives while that round is failing belongs to the next one.
+   */
+  readonly feedbackPending?: readonly string[];
   readonly updatedAt: string;
 }
 
