@@ -116,16 +116,20 @@ It took eight runs to get here, and each failure was a real defect, now fixed:
 6. run 7 blocked on "no commits" because the resumed branch already held the fix from run 5.
 7. run 8 resumed correctly, reviewed, verified, and opened PR #5.
 
+Done on 2026-10-28: `softfac check-pr` passed on both PRs, both were merged by hand, #2 was closed
+manually and #3 closed through the `Fixes #3` keyword. `main` is at the second merge commit and the
+local checkout fast-forwards cleanly.
+
 Remaining, in order:
 
 1. Decide on `bugs.autoMerge` for GameInGame. It is `false`, so the auto-merge and auto-close path
-   has never run. Turning it on and resetting #3 to `softfac:ready` would exercise
+   has never run. Turning it on and resetting a bug to `softfac:ready` would exercise
    `gh pr merge --match-head-commit` and the close; leave it off if the project is not ready for
    automated merges.
-2. Merge PR #4 and PR #5 by hand, then close #2 (only bugs are auto-closed).
-3. Exercise the PR feedback loop before merging #4: comment on the PR, run once, and confirm the
-   implementer addresses the comment, re-reviews, re-verifies, and pushes.
-4. Exercise the architect. Nothing has been reviewed yet: `architecture.decisions` is empty and #3
+2. Exercise the PR feedback loop. It needs an open PR in the human pile: file a benign issue, let the
+   factory open the PR, comment on the PR, then run once and confirm the implementer addresses the
+   comment, re-reviews, re-verifies, and pushes without merging.
+3. Exercise the architect. Nothing has been reviewed yet: `architecture.decisions` is empty and #3
    reported "architecture skipped", because a `bug` is not in the substantial labels and the branch
    never reached `everyCommits: 10`. Add a `feature` or `architecture` label to an issue, or let the
    history accumulate ten commits, then check `docs/architecture/reviews/`.
