@@ -39,6 +39,9 @@ A Pi-native software factory:
       cmd.exe keeps literally and pi rejects as an unknown model.
 - [x] `agents.idleTimeoutSeconds` raises the runner's silence window for projects whose
       verification command legitimately produces no agent output for many minutes.
+- [x] The implementer prompt forbids stopping processes it did not start. In no-sandbox mode the
+      factory and the verifier look like ordinary node processes in `ps`, and an agent that tried
+      to clean up an "orphaned runner" killed the factory running it.
 - [x] `softfac doctor` verifies that the working directory is a git repo with an `origin` remote.
 - [x] Verification commands: `verification.commands` run sequentially in the issue's sandbox
       before the PR opens, stop at the first failure, and block the issue with the exit code and
@@ -175,4 +178,6 @@ Then, roughly in value order:
 - Inline review comments on a diff are not fetched; only the PR conversation and review bodies
   are read.
 - The architect sees the diff plus a repository outline, not the whole repository.
+- No-sandbox runs share the host process table, so an implementer can kill the factory or the
+  verifier. The prompt rule is the only guard; a real sandbox would be needed to enforce it.
 - Reviewer sessions are reused per area, so a very long-lived session can still drift.
