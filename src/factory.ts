@@ -295,6 +295,10 @@ export class Factory {
     // A crash mid-round must not requeue the issue as fresh work; recovery
     // turns this back into "pull-request" and the PR is polled again.
     await this.#setIssue(issue, kind, branch, "feedback", { prNumber });
+    // The implementer adds commits; it does not own the branch. An amend or
+    // rebase here can drop the architect's approved commit, which makes the
+    // push non-fast-forward and silently discards a review that already ran.
+    const preFeedbackHead = await this.#git.headSha(branch);
 
     const feedback: ReviewResult = {
       verdict: "changes_requested",
@@ -380,6 +384,18 @@ export class Factory {
         branch,
         `Review still requests changes on the human feedback for PR #${prNumber} after ${totalRounds} rounds: ${review.summary}` +
           (findings === "" ? "" : `\n${findings}`),
+        { reviewRounds: totalRounds, prNumber },
+      );
+    }
+
+    if (!(await this.#git.isAncestor(preFeedbackHead, branch))) {
+      return this.#block(
+        issue,
+        kind,
+        branch,
+        `The implementer rewrote the history of ${branch} while addressing PR #${prNumber}: ` +
+          `${preFeedbackHead} is no longer an ancestor. Restore the branch to that commit ` +
+          "before the feedback can be merged.",
         { reviewRounds: totalRounds, prNumber },
       );
     }

@@ -1193,6 +1193,44 @@ test("blocks when the reviewer still requests changes after a feedback round", a
   assert.equal(state.state.issues["42"]!.addressedFeedback, undefined);
 });
 
+test("blocks when feedback rewrites the branch history instead of appending", async () => {
+  const { tracker, git, agents, state, factory } = setup([]);
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "comment:C_1",
+        author: "kim",
+        body: "Please add a null check.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  seedWaiting(state);
+  agents.implementResults = [
+    { sessionId: "impl-2", commits: 1, stdout: "rebased" },
+  ];
+  agents.reviewResults = [
+    { verdict: "approved", summary: "Feedback addressed.", findings: [], commits: 0 },
+  ];
+  // The implementer rebased away the architect's commit: the head handed to
+  // it is no longer reachable from the branch.
+  git.ancestor = false;
+
+  const results = await factory.runOnce();
+
+  assert.equal(results[0]!.outcome, "blocked");
+  assert.match(tracker.blocks[0]!.reason, /rewrote the history/i);
+  assert.deepEqual(git.ancestorCalls[0], {
+    ancestor: "abcdef1234567890",
+    descendant: "softfac/42",
+  });
+  assert.deepEqual(git.pushes, []);
+  assert.equal(state.state.issues["42"]!.addressedFeedback, undefined);
+  assert.equal(agents.architectCalls.length, 0);
+});
+
 test("blocks when the implementer produces no commits for human feedback", async () => {
   const { tracker, agents, state, factory } = setup([]);
   tracker.knownIssues.push(issue(42, ["feature"]));

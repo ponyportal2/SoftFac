@@ -244,7 +244,10 @@ export class FakeGit implements GitOps {
     return this.fileContents.get(path);
   }
 
-  async isAncestor(_ancestor: string, _descendant: string): Promise<boolean> {
+  readonly ancestorCalls: { ancestor: string; descendant: string }[] = [];
+
+  async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
+    this.ancestorCalls.push({ ancestor, descendant });
     return this.ancestor;
   }
 
