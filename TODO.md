@@ -39,6 +39,8 @@ A Pi-native software factory:
       cmd.exe keeps literally and pi rejects as an unknown model.
 - [x] `agents.idleTimeoutSeconds` raises the runner's silence window for projects whose
       verification command legitimately produces no agent output for many minutes.
+- [x] A resumed issue whose branch already holds the work continues to review; "no commits" is a
+      failure only when the branch has nothing ahead of the base.
 - [x] The implementer prompt forbids stopping processes it did not start. In no-sandbox mode the
       factory and the verifier look like ordinary node processes in `ps`, and an agent that tried
       to clean up an "orphaned runner" killed the factory running it.
@@ -94,45 +96,39 @@ A Pi-native software factory:
       and deletions are blocked, and there are no required reviews or checks.
 - [x] 232 tests, typecheck clean, `npm run build` clean.
 
-## Live pipeline test in GameInGame (paused 2026-10-28 05:20)
+## Live pipeline test in GameInGame (2026-10-28)
 
-Two benign issues were filed to exercise the factory end to end:
-- #2 `documentation` — document the verification timing summary in `tools/testing/README.md`
-  (expects the human path: PR + `softfac:needs-human`, no merge).
-- #3 `bug` — `timingSummary` reports a negative duration when a result has no `duration_ms`
-  (expects auto-merge + auto-close).
+Two benign issues exercised the factory end to end:
+- #2 `documentation` -> PR #4, issue `softfac:needs-human`. Correct: normal work waits for a human.
+- #3 `bug` -> PR #5, issue `softfac:needs-human`. Correct under the current config because
+  `bugs.autoMerge` is `false`.
 
-Where it stopped: the third `softfac run --once` was stopped on 2026-10-28 05:22 while the
-implementer was running its own final verification (94/105 tests, phase `godot-host`). The factory,
-pi, and the Godot test processes were terminated deliberately, so the issue never reached `#verify`.
-Nothing is lost:
+Both PRs were verified by the factory (`node tools/testing/verify.mjs --suite affected --since main`,
+105 tests) and approved by the reviewer. The diffs are small and match their issues; the #2 text was
+checked line by line against `timingSummary`.
 
-- Branch `softfac/3` is at `98544fa Clamp missing-duration test timing summary`; the worktree
-  `.sandcastle/worktrees/softfac-3` is clean and its diff is exactly the fix plus a regression test
-  in `tests/verification.test.mjs`.
-- `.softfac/state.json` still records issue 3 as `running`, and `.softfac/run.lock` is left over.
-  Crash recovery requeues in-flight issues on the first cycle and recovers a stale lock, so a plain
-  restart should be enough.
-- Issue #3 carries `softfac:running`; #2 still carries `softfac:ready`.
+It took eight runs to get here, and each failure was a real defect, now fixed:
+1. model quoting: sandcastle wrapped the model in POSIX single quotes that `cmd.exe` kept literally.
+2. idle timeout: the suite is silent for minutes, so the 600 s default killed run 2.
+3. run 3 was stopped deliberately for the shutdown; crash recovery requeued it on the next start.
+4. run 5 was killed by its own implementer, which saw the factory in `ps` and took it for an orphan.
+5. run 6 was a no-op: requeue rewrote the label but the same cycle listed before GitHub's index caught up.
+6. run 7 blocked on "no commits" because the resumed branch already held the fix from run 5.
+7. run 8 resumed correctly, reviewed, verified, and opened PR #5.
 
-Pick up here:
+Remaining, in order:
 
-1. `cd /c/GameInGame && softfac run --once`. Confirm the log says the issue was requeued, then watch
-   `#verify` (the full affected suite, ~15-20 min of silence — `agents.idleTimeoutSeconds` is 2700
-   for exactly this), the reviewer, and for #3 the auto-merge.
-2. If #3 does not requeue on its own: `gh issue edit 3 --remove-label softfac:running --add-label
-   softfac:ready`, and drop the `"3"` entry from `.softfac/state.json`. Only delete
-   `.softfac/run.lock` when no `softfac` process is alive.
-3. Check the merge gate actually bound the verified commit: `gh pr view <n> --json state,mergedAt`
-   and `git log --oneline main` should show the squash commit on `main`; #3 should be closed by the
-   merge.
-4. Run once more for #2. Expected: an open PR labelled `softfac:needs-human`, issue still open, no
-   merge. Read the diff, then merge it by hand — that is the normal-PR path the TODO still owes.
-5. While #2 waits, its PR is polled for trusted comments; a comment should trigger a feedback round.
-   Use that to exercise the feedback loop once, then merge.
-6. Architecture: `architecture.everyCommits: 10`, `requireForSubstantial: true`. After these runs,
-   check `.softfac/state.json` `architecture.decisions` and `docs/architecture/reviews/` to confirm
-   a review fired and that the implementer never touched the architect-owned path.
+1. Decide on `bugs.autoMerge` for GameInGame. It is `false`, so the auto-merge and auto-close path
+   has never run. Turning it on and resetting #3 to `softfac:ready` would exercise
+   `gh pr merge --match-head-commit` and the close; leave it off if the project is not ready for
+   automated merges.
+2. Merge PR #4 and PR #5 by hand, then close #2 (only bugs are auto-closed).
+3. Exercise the PR feedback loop before merging #4: comment on the PR, run once, and confirm the
+   implementer addresses the comment, re-reviews, re-verifies, and pushes.
+4. Exercise the architect. Nothing has been reviewed yet: `architecture.decisions` is empty and #3
+   reported "architecture skipped", because a `bug` is not in the substantial labels and the branch
+   never reached `everyCommits: 10`. Add a `feature` or `architecture` label to an issue, or let the
+   history accumulate ten commits, then check `docs/architecture/reviews/`.
 
 Gotchas seen during the test:
 - The implementer sometimes emits `<promise>COMPLETE</promise>` and then hangs while a child
