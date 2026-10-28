@@ -49,6 +49,8 @@ A Pi-native software factory:
 - [x] The implementer prompt forbids stopping processes it did not start. In no-sandbox mode the
       factory and the verifier look like ordinary node processes in `ps`, and an agent that tried
       to clean up an "orphaned runner" killed the factory running it.
+- [x] `softfac run --help` started a second daemon instead of printing usage. Any subcommand
+      with `--help` or `-h` now prints the usage and exits.
 - [x] `softfac doctor` verifies that the working directory is a git repo with an `origin` remote.
 - [x] Verification commands: `verification.commands` run sequentially in the issue's sandbox
       before the PR opens, stop at the first failure, and block the issue with the exit code and
@@ -145,15 +147,23 @@ Later on 2026-10-28 the three remaining paths ran:
 - **Feedback loop (issue #8).** A real PR comment started a round: the implementer committed
   `Report empty verifier selections` with a regression test, the reviewer re-approved, a second
   architect commit reviewed it, and the gate re-ran. The push then failed as non-fast-forward
-  because the implementer had rebased the branch and dropped the first architect commit. Fixed
-  in two places: the implementer prompt now declares history append-only, and the factory records
-  the pre-feedback head and blocks an issue whose branch no longer contains it. The branch was
-  restored with `git rebase --onto <remote head> <old base> softfac/8` and pushed.
+  because the reviewer had asked for the architect's review files to be removed and the implementer
+  rebased them away. Three fixes: the implementer prompt declares history append-only, the factory
+  records the pre-feedback head and blocks a branch that no longer contains it, and the reviewer
+  prompt says `docs/architecture/reviews` is the architect's. The branch was restored with
+  `git rebase --onto <remote head> <old base> softfac/8`.
+  The retry then ran clean: `a0d1613 Document verifier test listing` -> reviewer approved ->
+  `ae6dc13 arch: review a0d1613` -> guard passed -> pushed `c855e09..ae6dc13` as a fast-forward.
+  Verification failed once on `package:contents` ("A test action is already pending"); the same
+  test passed in 62s on a re-run, so the failure was flaky and unrelated. PR #9 merged and #8
+  closed by hand.
 
 Remaining, in order:
 
-1. Re-run the feedback round on #8 with the guard in place and merge PR #9, then close #8.
-2. Keep `bugs.autoMerge: false` until a few more real merges have been watched.
+1. Keep `bugs.autoMerge: false` until a few more real merges have been watched.
+2. A failed feedback verification strands the round's commits on the local branch: the issue blocks
+   and the next run asks the implementer to redo work that is already committed. Either record the
+   feedback as addressed before verification, or let a re-run verify the existing head.
 
 Gotchas seen during the test:
 - The implementer sometimes emits `<promise>COMPLETE</promise>` and then hangs while a child
