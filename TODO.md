@@ -92,6 +92,9 @@ A Pi-native software factory:
       implementer runs and blocks the issue when that commit is no longer an ancestor. An implementer
       that rebased away the architect's `arch: review` commit made the push non-fast-forward and
       silently dropped a review that had already been approved.
+- [x] The reviewer is told that `docs/architecture/reviews` belongs to the architect. It used to
+      flag those files as out-of-scope on a branch under review and ask for their removal, which is
+      what pushed the implementer into rewriting history in the first place.
 - [x] `bugs.autoMerge` defaults to `false`, and enabling it without a verification command is a
       config error, so an unverified merge cannot be configured.
 - [x] Human approval is no longer a policy rule. SoftFac only auto-merges bugs, so the rule could
