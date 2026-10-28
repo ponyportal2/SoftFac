@@ -88,6 +88,10 @@ A Pi-native software factory:
       `COLLABORATOR`, or `review.trustedAuthors` steer the implementer; outsiders are ignored.
 - [x] A substantial feedback round re-runs the architecture gate on the new commits before the
       push; a rejection blocks the issue and nothing is pushed.
+- [x] Feedback history is append-only: the factory records the branch head before the feedback
+      implementer runs and blocks the issue when that commit is no longer an ancestor. An implementer
+      that rebased away the architect's `arch: review` commit made the push non-fast-forward and
+      silently dropped a review that had already been approved.
 - [x] `bugs.autoMerge` defaults to `false`, and enabling it without a verification command is a
       config error, so an unverified merge cannot be configured.
 - [x] Human approval is no longer a policy rule. SoftFac only auto-merges bugs, so the rule could
@@ -125,26 +129,37 @@ Done on 2026-10-28: `softfac check-pr` passed on both PRs, both were merged by h
 manually and #3 closed through the `Fixes #3` keyword. `main` is at the second merge commit and the
 local checkout fast-forwards cleanly.
 
+Later on 2026-10-28 the three remaining paths ran:
+
+- **Auto-merge (issue #6, `bugs.autoMerge: true`).** The factory committed
+  `Trim changed paths in verifier`, the reviewer approved, verification ran 105/105, and
+  `gh pr merge --match-head-commit f430cab` merged PR #7 at 10:01:59Z. The issue auto-closed and
+  the merge commit landed on `main`. Config reverted to `false` afterwards.
+- **Architect (issue #8, `feature`, `requireForSubstantial: true`).** The implementer extracted
+  `resolveSelection` and added `--list`; the reviewer approved; `[architect-8]` committed
+  `arch: review 702f534` with `docs/architecture/reviews/2026-10-28-702f534.md` and the verdict
+  `approved`. PR #9 opened and #8 entered the human pile.
+- **Feedback loop (issue #8).** A real PR comment started a round: the implementer committed
+  `Report empty verifier selections` with a regression test, the reviewer re-approved, a second
+  architect commit reviewed it, and the gate re-ran. The push then failed as non-fast-forward
+  because the implementer had rebased the branch and dropped the first architect commit. Fixed
+  in two places: the implementer prompt now declares history append-only, and the factory records
+  the pre-feedback head and blocks an issue whose branch no longer contains it. The branch was
+  restored with `git rebase --onto <remote head> <old base> softfac/8` and pushed.
+
 Remaining, in order:
 
-1. Decide on `bugs.autoMerge` for GameInGame. It is `false`, so the auto-merge and auto-close path
-   has never run. Turning it on and resetting a bug to `softfac:ready` would exercise
-   `gh pr merge --match-head-commit` and the close; leave it off if the project is not ready for
-   automated merges.
-2. Exercise the PR feedback loop. It needs an open PR in the human pile: file a benign issue, let the
-   factory open the PR, comment on the PR, then run once and confirm the implementer addresses the
-   comment, re-reviews, re-verifies, and pushes without merging.
-3. Exercise the architect. Nothing has been reviewed yet: `architecture.decisions` is empty and #3
-   reported "architecture skipped", because a `bug` is not in the substantial labels and the branch
-   never reached `everyCommits: 10`. Add a `feature` or `architecture` label to an issue, or let the
-   history accumulate ten commits, then check `docs/architecture/reviews/`.
+1. Re-run the feedback round on #8 with the guard in place and merge PR #9, then close #8.
+2. Keep `bugs.autoMerge: false` until a few more real merges have been watched.
 
 Gotchas seen during the test:
 - The implementer sometimes emits `<promise>COMPLETE</promise>` and then hangs while a child
   verification finishes; sandcastle force-completes after a 60s grace window. Judge the run by the
   commit, not by the process exiting promptly.
-- The Godot host tests can rewrite `GameSmith-Windows/GameSmith.pck`. If it shows up dirty:
-  `git -C .sandcastle/worktrees/softfac-3 checkout -- GameSmith-Windows/GameSmith.pck`.
+- The Godot host tests can rewrite `GameSmith-Windows/GameSmith.pck`. If it shows up dirty,
+  `git restore` and `git checkout --` hang on that file in this checkout (no process holds it;
+  the filter path seems stuck). `git cat-file blob HEAD:<path> > /tmp/pck.bin && cp /tmp/pck.bin
+  <path>` restores it instantly.
 - Never run two factory instances against GameInGame; they share the worktree and the lock.
 - `gh issue create --body "..."` in Git Bash eats backticks; write the body to a file and use
   `--body-file`.

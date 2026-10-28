@@ -35,6 +35,11 @@ Rules:
   node processes; killing one by PID aborts the run. Undo stray build artifacts with
   \`git restore\` instead of hunting for processes.
 - Do not edit \`docs/architecture/reviews\`; those are written by the architect.
+- The branch history is append-only. Never rebase, amend, reset, or force-rewrite a
+  commit you did not write in this session, including \`arch: review ...\` commits from
+  the architect. Add new commits instead; if an earlier commit looks wrong, say so in
+  your final message and stop. The factory rejects a branch that no longer contains
+  the head it handed you.
 - Do not use closing keywords in commit messages.
 - When the work is complete and verified, print <promise>COMPLETE</promise>.
 `;
