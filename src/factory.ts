@@ -449,13 +449,16 @@ export class Factory {
       );
     }
 
-    if (!(await this.#git.isAncestor(roundBase, branch))) {
+    // The loop was handed the head the poll started from, not the round's base:
+    // a resume that rebases away preFeedbackHead but keeps the base has still
+    // lost the work this round was verifying.
+    if (!(await this.#git.isAncestor(preFeedbackHead, branch))) {
       return this.#block(
         issue,
         kind,
         branch,
         `The implementer rewrote the history of ${branch} while addressing PR #${prNumber}: ` +
-          `${roundBase} is no longer an ancestor. Restore the branch to that commit ` +
+          `${preFeedbackHead} is no longer an ancestor. Restore the branch to that commit ` +
           "before the feedback can be merged.",
         { reviewRounds: totalRounds, prNumber },
       );
