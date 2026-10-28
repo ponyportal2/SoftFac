@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { isEntryPoint } from "../src/cli.js";
+import { isEntryPoint, main } from "../src/cli.js";
 
 test("recognizes the module's own path as the entry point", () => {
   const url = pathToFileURL(process.argv[1] ?? "").href;
@@ -16,6 +16,16 @@ test("rejects another file and a missing path", () => {
   const url = pathToFileURL(join(tmpdir(), "softfac-cli-real.js")).href;
   assert.equal(isEntryPoint(join(tmpdir(), "softfac-cli-other.js"), url), false);
   assert.equal(isEntryPoint(undefined, url), false);
+});
+
+test("prints usage instead of starting a daemon for a subcommand's --help", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "softfac-cli-help-"));
+  const runner = { run: async () => ({ stdout: "", stderr: "", exitCode: 0 }) };
+  try {
+    assert.equal(await main(["run", "--help"], { cwd: dir, runner }), 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("recognizes the entry point through a symlink", (t) => {

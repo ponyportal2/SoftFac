@@ -412,6 +412,12 @@ export async function main(
     console.log(HELP);
     return 0;
   }
+  // Any subcommand with --help prints the usage. Without this, `softfac run
+  // --help` fell through to runCommand and started a second daemon.
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(HELP);
+    return 0;
+  }
   if (command === "version" || command === "--version") {
     console.log("softfac 0.1.0");
     return 0;
