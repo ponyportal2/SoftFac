@@ -186,6 +186,9 @@ Gotchas seen during the test:
   `git restore` and `git checkout --` hang on that file in this checkout (no process holds it;
   the filter path seems stuck). `git cat-file blob HEAD:<path> > /tmp/pck.bin && cp /tmp/pck.bin
   <path>` restores it instantly.
+- `GameSmith.exe` is a Go program in `tools/windows-bootstrap`, built by hand:
+  `go build -trimpath -ldflags='-s -w' -o ../../GameSmith-Windows/GameSmith.exe .`.
+  `go version -m` does not record `-ldflags`, so match the size (6,211,072 bytes), not the metadata.
 - Never run two factory instances against GameInGame; they share the worktree and the lock.
 - `gh issue create --body "..."` in Git Bash eats backticks; write the body to a file and use
   `--body-file`.
