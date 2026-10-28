@@ -68,6 +68,7 @@ export interface FactoryDeps {
   readonly state: StateStore;
   readonly now?: () => Date;
   readonly logger?: FactoryLogger;
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 interface GateResult {
@@ -104,6 +105,7 @@ export class Factory {
   readonly #state: StateStore;
   readonly #now: () => Date;
   readonly #logger: FactoryLogger | undefined;
+  readonly #sleep: (ms: number) => Promise<void>;
   #recovered = false;
 
   constructor(deps: FactoryDeps) {
@@ -114,6 +116,7 @@ export class Factory {
     this.#state = deps.state;
     this.#now = deps.now ?? (() => new Date());
     this.#logger = deps.logger;
+    this.#sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   async recoverInterrupted(): Promise<number> {
@@ -161,11 +164,18 @@ export class Factory {
   }
 
   async runOnce(): Promise<ProcessResult[]> {
+    let requeued = 0;
     if (!this.#recovered) {
-      await this.recoverInterrupted();
+      requeued = await this.recoverInterrupted();
       this.#recovered = true;
     }
-    const issues = await this.#tracker.listReady();
+    let issues = await this.#tracker.listReady();
+    // Requeuing rewrites the label, and the tracker's label index can lag that
+    // write: the same cycle may still list nothing and report a no-op.
+    for (let attempt = 0; requeued > 0 && issues.length === 0 && attempt < 3; attempt += 1) {
+      await this.#sleep(1000 * (attempt + 1));
+      issues = await this.#tracker.listReady();
+    }
     const selected = issues.slice(0, this.#config.maxIssuesPerRun);
     const results: ProcessResult[] = [];
 

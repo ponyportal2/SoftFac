@@ -20,6 +20,7 @@ function setup(
   const git = new FakeGit(config.branchPrefix);
   const agents = new FakeAgents();
   const state = new MemoryStateStore();
+  const sleeps: number[] = [];
   const factory = new Factory({
     config,
     tracker,
@@ -27,8 +28,11 @@ function setup(
     agents,
     state,
     now: () => new Date("2026-10-24T12:00:00Z"),
+    sleep: async (ms) => {
+      sleeps.push(ms);
+    },
   });
-  return { config, tracker, git, agents, state, factory };
+  return { config, tracker, git, agents, state, factory, sleeps };
 }
 
 test("a bug is implemented, reviewed, merged, and auto-closed", async () => {
@@ -410,6 +414,36 @@ test("runOnce recovers interrupted work before claiming", async () => {
 
   assert.equal(claimedBeforeRequeue, false);
   assert.deepEqual(tracker.requeues, [42]);
+  assert.equal(results.length, 1);
+  assert.equal(results[0]!.outcome, "pull-request");
+});
+
+test("retries the ready list when the label index lags a requeue", async () => {
+  const target = issue(42, ["feature"]);
+  const { tracker, state, factory, sleeps } = setup([target]);
+  state.state = {
+    ...state.state,
+    issues: {
+      "42": {
+        number: 42,
+        status: "running",
+        kind: "substantial",
+        branch: "softfac/42",
+        updatedAt: "2026-10-24T11:00:00.000Z",
+      },
+    },
+  };
+  const ready = tracker.listReady.bind(tracker);
+  let lists = 0;
+  tracker.listReady = async () => {
+    lists += 1;
+    return lists === 1 ? [] : ready();
+  };
+
+  const results = await factory.runOnce();
+
+  assert.equal(lists, 2);
+  assert.deepEqual(sleeps, [1000]);
   assert.equal(results.length, 1);
   assert.equal(results[0]!.outcome, "pull-request");
 });

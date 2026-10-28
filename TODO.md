@@ -41,6 +41,8 @@ A Pi-native software factory:
       verification command legitimately produces no agent output for many minutes.
 - [x] A resumed issue whose branch already holds the work continues to review; "no commits" is a
       failure only when the branch has nothing ahead of the base.
+- [x] After crash recovery requeues an issue, a cycle that lists nothing retries the ready list
+      (three attempts, 1s/2s/3s) instead of reporting a no-op while the label index catches up.
 - [x] The implementer prompt forbids stopping processes it did not start. In no-sandbox mode the
       factory and the verifier look like ordinary node processes in `ps`, and an agent that tried
       to clean up an "orphaned runner" killed the factory running it.
@@ -180,7 +182,4 @@ Then, roughly in value order:
 - The architect sees the diff plus a repository outline, not the whole repository.
 - No-sandbox runs share the host process table, so an implementer can kill the factory or the
   verifier. The prompt rule is the only guard; a real sandbox would be needed to enforce it.
-- Crash recovery requeues the issue and rewrites its label, but the same cycle may still list no
-  ready issues while GitHub's label index catches up. A daemon picks it up on the next cycle; with
-  `--once` the run looks like a no-op and needs a second invocation.
 - Reviewer sessions are reused per area, so a very long-lived session can still drift.
