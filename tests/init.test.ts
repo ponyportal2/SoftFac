@@ -30,6 +30,10 @@ test("scaffolds config, prompts, and review directories", async () => {
       /Run the project's tests and any documented checks before you finish\./,
     );
     assert.match(implementer, /Do not edit `docs\/architecture\/reviews`/);
+    // The agent shares the host process table, so it must never kill by PID:
+    // the factory and its verifier look like ordinary node processes there.
+    assert.match(implementer, /Never stop processes you did not start\./);
+    assert.match(implementer, /killing one by PID aborts the run/);
     const reviewer = await readFile(
       join(dir, ".softfac/prompts/reviewer.md"),
       "utf8",

@@ -39,6 +39,11 @@ A Pi-native software factory:
       cmd.exe keeps literally and pi rejects as an unknown model.
 - [x] `agents.idleTimeoutSeconds` raises the runner's silence window for projects whose
       verification command legitimately produces no agent output for many minutes.
+- [x] A resumed issue whose branch already holds the work continues to review; "no commits" is a
+      failure only when the branch has nothing ahead of the base.
+- [x] The implementer prompt forbids stopping processes it did not start. In no-sandbox mode the
+      factory and the verifier look like ordinary node processes in `ps`, and an agent that tried
+      to clean up an "orphaned runner" killed the factory running it.
 - [x] `softfac doctor` verifies that the working directory is a git repo with an `origin` remote.
 - [x] Verification commands: `verification.commands` run sequentially in the issue's sandbox
       before the PR opens, stop at the first failure, and block the issue with the exit code and
@@ -91,6 +96,54 @@ A Pi-native software factory:
       and deletions are blocked, and there are no required reviews or checks.
 - [x] 232 tests, typecheck clean, `npm run build` clean.
 
+## Live pipeline test in GameInGame (2026-10-28)
+
+Two benign issues exercised the factory end to end:
+- #2 `documentation` -> PR #4, issue `softfac:needs-human`. Correct: normal work waits for a human.
+- #3 `bug` -> PR #5, issue `softfac:needs-human`. Correct under the current config because
+  `bugs.autoMerge` is `false`.
+
+Both PRs were verified by the factory (`node tools/testing/verify.mjs --suite affected --since main`,
+105 tests) and approved by the reviewer. The diffs are small and match their issues; the #2 text was
+checked line by line against `timingSummary`.
+
+It took eight runs to get here, and each failure was a real defect, now fixed:
+1. model quoting: sandcastle wrapped the model in POSIX single quotes that `cmd.exe` kept literally.
+2. idle timeout: the suite is silent for minutes, so the 600 s default killed run 2.
+3. run 3 was stopped deliberately for the shutdown; crash recovery requeued it on the next start.
+4. run 5 was killed by its own implementer, which saw the factory in `ps` and took it for an orphan.
+5. run 6 was a no-op: requeue rewrote the label but the same cycle listed before GitHub's index caught up.
+6. run 7 blocked on "no commits" because the resumed branch already held the fix from run 5.
+7. run 8 resumed correctly, reviewed, verified, and opened PR #5.
+
+Done on 2026-10-28: `softfac check-pr` passed on both PRs, both were merged by hand, #2 was closed
+manually and #3 closed through the `Fixes #3` keyword. `main` is at the second merge commit and the
+local checkout fast-forwards cleanly.
+
+Remaining, in order:
+
+1. Decide on `bugs.autoMerge` for GameInGame. It is `false`, so the auto-merge and auto-close path
+   has never run. Turning it on and resetting a bug to `softfac:ready` would exercise
+   `gh pr merge --match-head-commit` and the close; leave it off if the project is not ready for
+   automated merges.
+2. Exercise the PR feedback loop. It needs an open PR in the human pile: file a benign issue, let the
+   factory open the PR, comment on the PR, then run once and confirm the implementer addresses the
+   comment, re-reviews, re-verifies, and pushes without merging.
+3. Exercise the architect. Nothing has been reviewed yet: `architecture.decisions` is empty and #3
+   reported "architecture skipped", because a `bug` is not in the substantial labels and the branch
+   never reached `everyCommits: 10`. Add a `feature` or `architecture` label to an issue, or let the
+   history accumulate ten commits, then check `docs/architecture/reviews/`.
+
+Gotchas seen during the test:
+- The implementer sometimes emits `<promise>COMPLETE</promise>` and then hangs while a child
+  verification finishes; sandcastle force-completes after a 60s grace window. Judge the run by the
+  commit, not by the process exiting promptly.
+- The Godot host tests can rewrite `GameSmith-Windows/GameSmith.pck`. If it shows up dirty:
+  `git -C .sandcastle/worktrees/softfac-3 checkout -- GameSmith-Windows/GameSmith.pck`.
+- Never run two factory instances against GameInGame; they share the worktree and the lock.
+- `gh issue create --body "..."` in Git Bash eats backticks; write the body to a file and use
+  `--body-file`.
+
 ## Next (pick up here)
 
 1. Run one real normal PR end-to-end: the factory opens it, you review the diff and merge. This
@@ -125,4 +178,9 @@ Then, roughly in value order:
 - Inline review comments on a diff are not fetched; only the PR conversation and review bodies
   are read.
 - The architect sees the diff plus a repository outline, not the whole repository.
+- No-sandbox runs share the host process table, so an implementer can kill the factory or the
+  verifier. The prompt rule is the only guard; a real sandbox would be needed to enforce it.
+- Crash recovery requeues the issue and rewrites its label, but the same cycle may still list no
+  ready issues while GitHub's label index catches up. A daemon picks it up on the next cycle; with
+  `--once` the run looks like a no-op and needs a second invocation.
 - Reviewer sessions are reused per area, so a very long-lived session can still drift.
