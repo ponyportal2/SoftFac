@@ -27,6 +27,12 @@ export interface IssueRecord {
   readonly lastError?: string;
   /** Feedback ids already addressed, so a comment is never implemented twice. */
   readonly addressedFeedback?: readonly string[];
+  /**
+   * Head the current feedback round started from. A poll that finds the branch
+   * past it knows the implementer already committed for these comments and
+   * must verify that head instead of implementing the same comment again.
+   */
+  readonly feedbackBase?: string;
   readonly updatedAt: string;
 }
 

@@ -384,7 +384,9 @@ test("resets an interrupted feedback run without requeueing the issue", async ()
 
   const recovered = await factory.recoverInterrupted();
 
-  assert.equal(recovered, 1);
+  // Only requeued issues can vanish from listReady while the label index
+  // catches up; a feedback record stays in the review pile.
+  assert.equal(recovered, 0);
   assert.deepEqual(tracker.requeues, []);
   assert.equal(state.state.issues["42"]!.status, "pull-request");
   assert.equal(state.state.issues["42"]!.prNumber, 101);
@@ -1026,6 +1028,127 @@ test("addresses new human review feedback on a waiting PR", async () => {
   assert.deepEqual(state.state.issues["42"]!.addressedFeedback, [
     "comment:C_1",
   ]);
+  assert.deepEqual(agents.released, ["softfac/42"]);
+});
+
+test("resumes an interrupted feedback round from the commits already on the branch", async () => {
+  const { tracker, git, agents, state, factory } = setup([]);
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "comment:C_1",
+        author: "kim",
+        body: "Please add a null check.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  // The previous round committed and then blocked before the push.
+  seedWaiting(state, { feedbackBase: "1111111111111111" });
+  git.head = "2222222222222222";
+  agents.reviewResults = [
+    { verdict: "approved", summary: "Feedback addressed.", findings: [], commits: 0 },
+  ];
+
+  const results = await factory.runOnce();
+
+  assert.equal(agents.implementCalls.length, 0);
+  assert.equal(agents.reviewCalls.length, 1);
+  assert.equal(results[0]!.outcome, "pull-request");
+  assert.deepEqual(git.pushes, ["softfac/42"]);
+  assert.deepEqual(state.state.issues["42"]!.addressedFeedback, ["comment:C_1"]);
+  assert.equal(state.state.issues["42"]!.feedbackBase, undefined);
+});
+
+test("implements a new comment when the branch has not moved since the last round", async () => {
+  const { tracker, git, agents, state, factory } = setup([]);
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "comment:C_2",
+        author: "kim",
+        body: "Also cover the empty input.",
+        createdAt: "2026-10-24T10:00:00Z",
+      },
+    ],
+  });
+  seedWaiting(state, { feedbackBase: git.head });
+
+  await factory.runOnce();
+
+  assert.equal(agents.implementCalls.length, 1);
+  assert.equal(agents.reviewCalls.length, 1);
+});
+
+test("a failed feedback verification leaves a resumable round instead of repeating the comment", async () => {
+  const { tracker, git, agents, state, factory } = setup([], {
+    verification: { commands: ["npm test"] },
+  });
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "comment:C_1",
+        author: "kim",
+        body: "Please add a null check.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  seedWaiting(state);
+  agents.implementResults = [
+    { sessionId: "impl-2", commits: 1, stdout: "addressed" },
+  ];
+  agents.reviewResults = [
+    { verdict: "approved", summary: "Feedback addressed.", findings: [], commits: 0 },
+  ];
+  agents.verifyResults = [
+    {
+      passed: false,
+      results: [{ command: "npm test", exitCode: 1, output: "boom" }],
+    },
+  ];
+  // The implementer's commit moves the branch while the gate runs.
+  let moved = false;
+  agents.onVerify = () => {
+    if (!moved) {
+      moved = true;
+      git.head = "2222222222222222";
+    }
+  };
+
+  const first = await factory.runOnce();
+
+  assert.equal(first[0]!.outcome, "blocked");
+  assert.deepEqual(git.pushes, []);
+  assert.equal(state.state.issues["42"]!.feedbackBase, "abcdef1234567890");
+  assert.equal(state.state.issues["42"]!.addressedFeedback, undefined);
+
+  // A requeue sends the issue back through the initial path, which finds the
+  // commits already on the branch and pushes them.
+  git.commitsSince = 1;
+  agents.implementResults = [{ commits: 0, stdout: "already implemented" }];
+  const requeued = await factory.processIssue(issue(42, ["feature"]));
+  assert.equal(requeued.outcome, "pull-request");
+  assert.deepEqual(git.pushes, ["softfac/42"]);
+
+  // The comment is still fresh, but the round must resume rather than ask the
+  // implementer to write the same change a second time.
+  const second = await factory.runOnce();
+
+  assert.equal(agents.implementCalls.length, 2);
+  // The requeue ran the issue prompt; the comment was never handed over twice.
+  assert.equal(agents.implementCalls[1]!.feedback, undefined);
+  // The failed round, the requeue's own review, and the resumed round.
+  assert.equal(agents.reviewCalls.length, 3);
+  assert.deepEqual(git.pushes, ["softfac/42", "softfac/42"]);
+  assert.deepEqual(state.state.issues["42"]!.addressedFeedback, ["comment:C_1"]);
+  assert.equal(state.state.issues["42"]!.feedbackBase, undefined);
 });
 
 test("re-runs the architecture gate after substantial human feedback before pushing", async () => {

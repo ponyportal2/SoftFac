@@ -24,6 +24,7 @@ import type {
   FactoryLogger,
   GitOps,
   ImplementerInput,
+  ImplementerResult,
   Issue,
   IssueTracker,
   ReviewInput,
@@ -132,6 +133,9 @@ export class Factory {
       return 0;
     }
 
+    // Only a requeued issue can drop out of listReady while the label index
+    // catches up; a feedback record stays in the review pile.
+    let requeued = 0;
     for (const record of stale) {
       if (record.status === "feedback") {
         // The issue is still in the human review pile; only the feedback
@@ -142,6 +146,7 @@ export class Factory {
         continue;
       }
       await this.#tracker.requeue(record.number);
+      requeued += 1;
       this.#logger?.info(
         `issue #${record.number}: requeued after an interrupted ${record.status} run`,
       );
@@ -160,7 +165,7 @@ export class Factory {
       return { ...current, issues, updatedAt };
     });
 
-    return stale.length;
+    return requeued;
   }
 
   async runOnce(): Promise<ProcessResult[]> {
@@ -263,6 +268,17 @@ export class Factory {
           `issue #${record.number}: could not poll PR #${record.prNumber} for feedback: ` +
             errorMessage(error),
         );
+      } finally {
+        // Feedback work gets the same cleanup as the initial path; without it
+        // a daemon keeps one worktree and sandbox per reviewed PR until exit.
+        try {
+          await this.#agents.releaseWorktree(record.branch);
+        } catch (error) {
+          this.#logger?.warn(
+            `issue #${record.number}: could not release the worktree for ` +
+              `${record.branch}: ${errorMessage(error)}`,
+          );
+        }
       }
     }
     return results;
@@ -292,13 +308,23 @@ export class Factory {
       `issue #${issue.number}: addressing ${fresh.length} human review ` +
         `comment(s) on PR #${prNumber}`,
     );
-    // A crash mid-round must not requeue the issue as fresh work; recovery
-    // turns this back into "pull-request" and the PR is polled again.
-    await this.#setIssue(issue, kind, branch, "feedback", { prNumber });
     // The implementer adds commits; it does not own the branch. An amend or
     // rebase here can drop the architect's approved commit, which makes the
     // push non-fast-forward and silently discards a review that already ran.
     const preFeedbackHead = await this.#git.headSha(branch);
+    // A round that blocked after the implementer committed (a failed gate, a
+    // crash) left those commits on the branch. Starting over would ask for the
+    // same comment twice, and the second answer is always "no commits". The
+    // recorded base tells a resume apart from a genuinely new comment.
+    const resuming =
+      record.feedbackBase !== undefined &&
+      record.feedbackBase !== preFeedbackHead;
+    // A crash mid-round must not requeue the issue as fresh work; recovery
+    // turns this back into "pull-request" and the PR is polled again.
+    await this.#setIssue(issue, kind, branch, "feedback", {
+      prNumber,
+      feedbackBase: record.feedbackBase ?? preFeedbackHead,
+    });
 
     const feedback: ReviewResult = {
       verdict: "changes_requested",
@@ -308,18 +334,26 @@ export class Factory {
     };
 
     let implementerSession = await this.#session("implementer", issue.number);
-    let implementation = await this.#agents.implement(
-      this.#implementerInput(issue, branch, implementerSession, feedback),
-    );
-    await this.#remember("implementer", issue.number, implementation.sessionId);
-    if (implementation.commits <= 0) {
-      return this.#block(
-        issue,
-        kind,
-        branch,
-        `Implementer produced no commits while addressing review feedback on PR #${prNumber}.`,
-        { prNumber },
+    let implementation: ImplementerResult | undefined;
+    if (resuming) {
+      this.#logger?.info(
+        `issue #${issue.number}: resuming the feedback round from ` +
+          `${preFeedbackHead.slice(0, 7)}; the commits are already on ${branch}`,
       );
+    } else {
+      implementation = await this.#agents.implement(
+        this.#implementerInput(issue, branch, implementerSession, feedback),
+      );
+      await this.#remember("implementer", issue.number, implementation.sessionId);
+      if (implementation.commits <= 0) {
+        return this.#block(
+          issue,
+          kind,
+          branch,
+          `Implementer produced no commits while addressing review feedback on PR #${prNumber}.`,
+          { prNumber },
+        );
+      }
     }
 
     let reviewerSession = await this.#session("reviewer", issue.number, area);
@@ -328,7 +362,7 @@ export class Factory {
         issue,
         branch,
         reviewerSession,
-        implementation.sessionId,
+        implementation?.sessionId,
       ),
     );
     await this.#remember("reviewer", issue.number, review.sessionId, area);
@@ -347,7 +381,7 @@ export class Factory {
         this.#implementerInput(
           issue,
           branch,
-          implementation.sessionId ?? implementerSession,
+          implementation?.sessionId ?? implementerSession,
           review,
         ),
       );
@@ -427,6 +461,8 @@ export class Factory {
     await this.#setIssue(issue, kind, branch, "pull-request", {
       prNumber,
       addressedFeedback: fresh.map((item) => item.id),
+      // The round is pushed and verified; the next comment starts a new one.
+      feedbackBase: null,
     });
 
     return {
@@ -1043,11 +1079,16 @@ export class Factory {
       readonly prNumber?: number;
       readonly lastError?: string;
       readonly addressedFeedback?: readonly string[];
+      readonly feedbackBase?: string | null;
     } = {},
   ): Promise<void> {
     await this.#state.update((state: FactoryState) => {
       const previous = state.issues[String(issue.number)];
       const prNumber = patch.prNumber ?? previous?.prNumber;
+      const feedbackBase =
+        patch.feedbackBase === null
+          ? undefined
+          : (patch.feedbackBase ?? previous?.feedbackBase);
       const addressed = new Set(previous?.addressedFeedback ?? []);
       for (const id of patch.addressedFeedback ?? []) {
         addressed.add(id);
@@ -1060,6 +1101,7 @@ export class Factory {
         status,
         updatedAt,
         ...(prNumber === undefined ? {} : { prNumber }),
+        ...(feedbackBase === undefined ? {} : { feedbackBase }),
         ...(patch.lastError === undefined ? {} : { lastError: patch.lastError }),
         ...(addressed.size === 0
           ? {}

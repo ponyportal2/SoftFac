@@ -160,13 +160,19 @@ Later on 2026-10-28 the three remaining paths ran:
   result was discarded as well. Fixed in GameInGame: poll to the deadline, return
   `{"ok": false, "timed_out": true}` naming the action, and assert `release`. PR #9 merged and #8
   closed by hand.
+  That block also exposed the missing recovery for a feedback round: the commits stayed local, the
+  comment stayed fresh, and a requeue asked for the same change again and blocked on "no commits".
+  The record now keeps `feedbackBase`, the head the round started from, so a poll that finds the
+  branch past it resumes the round (review, gate, push) instead of implementing the comment twice.
+  `#addressFeedback` also releases its worktree in a `finally` like the initial path, and
+  `recoverInterrupted` returns only the issues it actually requeued.
 
 Remaining, in order:
 
 1. Keep `bugs.autoMerge: false` until a few more real merges have been watched.
-2. A failed feedback verification strands the round's commits on the local branch: the issue blocks
-   and the next run asks the implementer to redo work that is already committed. Either record the
-   feedback as addressed before verification, or let a re-run verify the existing head.
+2. Watch the first feedback round that blocks on the gate: the next poll should log
+   `resuming the feedback round from <sha>` and push the existing head without a second
+   implementation.
 
 Gotchas seen during the test:
 - The implementer sometimes emits `<promise>COMPLETE</promise>` and then hangs while a child
@@ -182,8 +188,8 @@ Gotchas seen during the test:
 
 ## Next (pick up here)
 
-1. Run one real normal PR end-to-end: the factory opens it, you review the diff and merge. This
-   proves the PR path without the Actions layer.
+1. Use the factory on the next real GameInGame issue. The normal PR path (#2 -> #4, #3 -> #5) and
+   the feedback path have both run; stop adding infrastructure and let real work find the gaps.
 2. Keep `bugs.autoMerge: false` for several real cycles. Before enabling it, make sure
    `verification.commands` is non-empty and watch the first few merges.
 3. Decide later whether GitHub-native required reviews are worth a second identity. Only then
