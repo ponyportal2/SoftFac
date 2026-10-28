@@ -1275,6 +1275,52 @@ test("blocks a resume when the branch no longer contains the round's base", asyn
   assert.deepEqual(git.pushes, []);
 });
 
+test("blocks a resume that rebases away the head the round was verifying", async () => {
+  const { tracker, git, agents, state, factory } = setup([]);
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "comment:C_1",
+        author: "kim",
+        body: "Please add a null check.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  // The round committed B on top of A and blocked before the push.
+  seedWaiting(state, {
+    feedbackBase: "1111111111111111",
+    feedbackPending: ["comment:C_1"],
+  });
+  git.head = "2222222222222222";
+  // The resumed review asks for more, and the implementer rebases B away while
+  // keeping A. A is still an ancestor, so only B can reveal the loss.
+  agents.reviewResults = [
+    {
+      verdict: "changes_requested",
+      summary: "Still missing the empty case.",
+      findings: ["cover the empty input"],
+      commits: 0,
+    },
+    { verdict: "approved", summary: "Fine.", findings: [], commits: 0 },
+  ];
+  git.ancestorResults.set("2222222222222222", false);
+
+  const results = await factory.runOnce();
+
+  assert.equal(results[0]!.outcome, "blocked");
+  assert.match(tracker.blocks[0]!.reason, /rewrote the history/i);
+  // The saved base passes before the loop; the head handed to it does not.
+  assert.deepEqual(
+    git.ancestorCalls.map((call) => call.ancestor),
+    ["1111111111111111", "2222222222222222"],
+  );
+  assert.deepEqual(git.pushes, []);
+  assert.equal(state.state.issues["42"]!.addressedFeedback, undefined);
+});
+
 test("re-runs the architecture gate after substantial human feedback before pushing", async () => {
   const { tracker, git, agents, state, factory } = setup([], {
     verification: { commands: ["npm test"] },

@@ -182,6 +182,8 @@ export class FakeGit implements GitOps {
   head = "abcdef1234567890";
   baseHead = "base1234567890";
   ancestor = true;
+  /** Per-commit answers; a missing sha falls back to {@link ancestor}. */
+  ancestorResults = new Map<string, boolean>();
   diffText = "diff --git a/file b/file";
   changedPaths: string[] = ["src/file.ts", "tests/file.test.ts"];
   changedPathRounds: string[][] = [];
@@ -248,7 +250,7 @@ export class FakeGit implements GitOps {
 
   async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
     this.ancestorCalls.push({ ancestor, descendant });
-    return this.ancestor;
+    return this.ancestorResults.get(ancestor) ?? this.ancestor;
   }
 
   async diff(_branch: string, _sinceSha: string | null): Promise<string> {
