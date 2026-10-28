@@ -43,6 +43,9 @@ A Pi-native software factory:
       failure only when the branch has nothing ahead of the base.
 - [x] After crash recovery requeues an issue, a cycle that lists nothing retries the ready list
       (three attempts, 1s/2s/3s) instead of reporting a no-op while the label index catches up.
+- [x] The reviewer forks its per-area session into the worktree under review. pi refuses to resume a
+      session recorded in another project directory and aborts silently, so the second issue in an
+      area failed with "missing <review> block" and no agent output.
 - [x] The implementer prompt forbids stopping processes it did not start. In no-sandbox mode the
       factory and the verifier look like ordinary node processes in `ps`, and an agent that tried
       to clean up an "orphaned runner" killed the factory running it.
@@ -182,4 +185,5 @@ Then, roughly in value order:
 - The architect sees the diff plus a repository outline, not the whole repository.
 - No-sandbox runs share the host process table, so an implementer can kill the factory or the
   verifier. The prompt rule is the only guard; a real sandbox would be needed to enforce it.
-- Reviewer sessions are reused per area, so a very long-lived session can still drift.
+- Reviewer sessions are reused per area and forked into each new worktree, so every review copies
+  the whole conversation into a new session file instead of appending to one.

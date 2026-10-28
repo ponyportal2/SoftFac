@@ -77,20 +77,21 @@ export function piAgent(
   model: string,
   options: PiOptions = {},
   platform: NodeJS.Platform = process.platform,
+  resumeMode: "session" | "fork" = "session",
 ): ReturnType<typeof pi> {
   const base = pi(model, options);
-  if (platform !== "win32") {
-    return base;
-  }
+  const escape = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   return {
     ...base,
     buildPrintCommand: ({ prompt, resumeSession }) => ({
       command:
-        `pi -p --mode json --model ${model}` +
+        `pi -p --mode json --model ${platform === "win32" ? model : escape(model)}` +
         (options.thinking === undefined
           ? ""
           : ` --thinking ${options.thinking}`) +
-        (resumeSession === undefined ? "" : ` --session ${resumeSession}`),
+        (resumeSession === undefined
+          ? ""
+          : ` --${resumeMode} ${platform === "win32" ? resumeSession : escape(resumeSession)}`),
       stdin: prompt,
     }),
   };
@@ -139,7 +140,15 @@ export class SandcastleAgentRunner implements AgentRunner {
         ? {}
         : { thinking: options.agents.thinking };
     this.#implementer = piAgent(options.agents.implementerModel, thinking);
-    this.#reviewer = piAgent(options.agents.reviewerModel, thinking);
+    // The reviewer session is keyed by issue area, so it outlives the worktree
+    // it was created in. pi refuses to resume a session from another project
+    // directory, so fork it into the worktree of the issue under review.
+    this.#reviewer = piAgent(
+      options.agents.reviewerModel,
+      thinking,
+      process.platform,
+      "fork",
+    );
     this.#architect = piAgent(options.agents.architectModel, thinking);
   }
 
@@ -277,6 +286,11 @@ export class SandcastleAgentRunner implements AgentRunner {
         : { resumeSession: input.sessionId }),
     });
 
+    if (result.stdout.trim() === "") {
+      throw new Error(
+        `reviewer produced no output for ${input.branch}; the agent exited without a message (see the review-${input.issue.number} log)`,
+      );
+    }
     const verdict = parseReviewOutput(result.stdout);
     const sessionId = lastSessionId(result) ?? input.sessionId;
     return {
