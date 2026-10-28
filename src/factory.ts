@@ -315,21 +315,47 @@ export class Factory {
     // A round that blocked after the implementer committed (a failed gate, a
     // crash) left those commits on the branch. Starting over would ask for the
     // same comment twice, and the second answer is always "no commits". The
-    // recorded base tells a resume apart from a genuinely new comment.
+    // recorded base and ids tell a resume apart from a new comment: only the
+    // comments that opened the round belong to it, so one that arrives while
+    // the round is failing waits for the next round.
+    const savedBase = record.feedbackBase;
+    const savedPending = record.feedbackPending;
+    const saved =
+      savedPending === undefined
+        ? []
+        : fresh.filter((item) => savedPending.includes(item.id));
     const resuming =
-      record.feedbackBase !== undefined &&
-      record.feedbackBase !== preFeedbackHead;
+      savedBase !== undefined &&
+      savedBase !== preFeedbackHead &&
+      saved.length > 0;
+    // A branch that no longer contains the base cannot be verified as the work
+    // for this round; resuming would push unrelated history as if it were.
+    const roundBase =
+      resuming && savedBase !== undefined ? savedBase : preFeedbackHead;
+    if (resuming && !(await this.#git.isAncestor(roundBase, branch))) {
+      return this.#block(
+        issue,
+        kind,
+        branch,
+        `The branch no longer contains ${roundBase}, where the feedback round ` +
+          `for PR #${prNumber} started. Restore the branch to that commit ` +
+          "before the round can be verified.",
+        { prNumber },
+      );
+    }
+    const round = resuming ? saved : fresh;
     // A crash mid-round must not requeue the issue as fresh work; recovery
     // turns this back into "pull-request" and the PR is polled again.
     await this.#setIssue(issue, kind, branch, "feedback", {
       prNumber,
-      feedbackBase: record.feedbackBase ?? preFeedbackHead,
+      feedbackBase: roundBase,
+      feedbackPending: round.map((item) => item.id),
     });
 
     const feedback: ReviewResult = {
       verdict: "changes_requested",
       summary: `A human reviewer requested changes on PR #${prNumber}. Address every point below.`,
-      findings: fresh.map((item) => `${item.author}: ${item.body}`),
+      findings: round.map((item) => `${item.author}: ${item.body}`),
       commits: 0,
     };
 
@@ -338,7 +364,8 @@ export class Factory {
     if (resuming) {
       this.#logger?.info(
         `issue #${issue.number}: resuming the feedback round from ` +
-          `${preFeedbackHead.slice(0, 7)}; the commits are already on ${branch}`,
+          `${roundBase.slice(0, 7)} at ${preFeedbackHead.slice(0, 7)}; ` +
+          `the commits are already on ${branch}`,
       );
     } else {
       implementation = await this.#agents.implement(
@@ -422,13 +449,13 @@ export class Factory {
       );
     }
 
-    if (!(await this.#git.isAncestor(preFeedbackHead, branch))) {
+    if (!(await this.#git.isAncestor(roundBase, branch))) {
       return this.#block(
         issue,
         kind,
         branch,
         `The implementer rewrote the history of ${branch} while addressing PR #${prNumber}: ` +
-          `${preFeedbackHead} is no longer an ancestor. Restore the branch to that commit ` +
+          `${roundBase} is no longer an ancestor. Restore the branch to that commit ` +
           "before the feedback can be merged.",
         { reviewRounds: totalRounds, prNumber },
       );
@@ -454,15 +481,16 @@ export class Factory {
     await this.#git.push(branch);
     await this.#tracker.comment(
       issue,
-      `Addressed ${fresh.length} human review comment(s) on PR #${prNumber} in ` +
+      `Addressed ${round.length} human review comment(s) on PR #${prNumber} in ` +
         `${totalRounds} review round(s). The issue stays in the human review pile ` +
         "until the PR is merged.",
     );
     await this.#setIssue(issue, kind, branch, "pull-request", {
       prNumber,
-      addressedFeedback: fresh.map((item) => item.id),
+      addressedFeedback: round.map((item) => item.id),
       // The round is pushed and verified; the next comment starts a new one.
       feedbackBase: null,
+      feedbackPending: null,
     });
 
     return {
@@ -1080,6 +1108,7 @@ export class Factory {
       readonly lastError?: string;
       readonly addressedFeedback?: readonly string[];
       readonly feedbackBase?: string | null;
+      readonly feedbackPending?: readonly string[] | null;
     } = {},
   ): Promise<void> {
     await this.#state.update((state: FactoryState) => {
@@ -1089,6 +1118,10 @@ export class Factory {
         patch.feedbackBase === null
           ? undefined
           : (patch.feedbackBase ?? previous?.feedbackBase);
+      const feedbackPending =
+        patch.feedbackPending === null
+          ? undefined
+          : (patch.feedbackPending ?? previous?.feedbackPending);
       const addressed = new Set(previous?.addressedFeedback ?? []);
       for (const id of patch.addressedFeedback ?? []) {
         addressed.add(id);
@@ -1102,6 +1135,7 @@ export class Factory {
         updatedAt,
         ...(prNumber === undefined ? {} : { prNumber }),
         ...(feedbackBase === undefined ? {} : { feedbackBase }),
+        ...(feedbackPending === undefined ? {} : { feedbackPending }),
         ...(patch.lastError === undefined ? {} : { lastError: patch.lastError }),
         ...(addressed.size === 0
           ? {}

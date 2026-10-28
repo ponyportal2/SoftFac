@@ -1046,7 +1046,10 @@ test("resumes an interrupted feedback round from the commits already on the bran
     ],
   });
   // The previous round committed and then blocked before the push.
-  seedWaiting(state, { feedbackBase: "1111111111111111" });
+  seedWaiting(state, {
+    feedbackBase: "1111111111111111",
+    feedbackPending: ["comment:C_1"],
+  });
   git.head = "2222222222222222";
   agents.reviewResults = [
     { verdict: "approved", summary: "Feedback addressed.", findings: [], commits: 0 },
@@ -1060,6 +1063,12 @@ test("resumes an interrupted feedback round from the commits already on the bran
   assert.deepEqual(git.pushes, ["softfac/42"]);
   assert.deepEqual(state.state.issues["42"]!.addressedFeedback, ["comment:C_1"]);
   assert.equal(state.state.issues["42"]!.feedbackBase, undefined);
+  assert.equal(state.state.issues["42"]!.feedbackPending, undefined);
+  // Resume is only safe while the branch still contains the round's base.
+  assert.deepEqual(git.ancestorCalls[0], {
+    ancestor: "1111111111111111",
+    descendant: "softfac/42",
+  });
 });
 
 test("implements a new comment when the branch has not moved since the last round", async () => {
@@ -1076,7 +1085,10 @@ test("implements a new comment when the branch has not moved since the last roun
       },
     ],
   });
-  seedWaiting(state, { feedbackBase: git.head });
+  seedWaiting(state, {
+    feedbackBase: git.head,
+    feedbackPending: ["comment:C_1"],
+  });
 
   await factory.runOnce();
 
@@ -1127,6 +1139,7 @@ test("a failed feedback verification leaves a resumable round instead of repeati
   assert.equal(first[0]!.outcome, "blocked");
   assert.deepEqual(git.pushes, []);
   assert.equal(state.state.issues["42"]!.feedbackBase, "abcdef1234567890");
+  assert.deepEqual(state.state.issues["42"]!.feedbackPending, ["comment:C_1"]);
   assert.equal(state.state.issues["42"]!.addressedFeedback, undefined);
 
   // A requeue sends the issue back through the initial path, which finds the
@@ -1149,6 +1162,117 @@ test("a failed feedback verification leaves a resumable round instead of repeati
   assert.deepEqual(git.pushes, ["softfac/42", "softfac/42"]);
   assert.deepEqual(state.state.issues["42"]!.addressedFeedback, ["comment:C_1"]);
   assert.equal(state.state.issues["42"]!.feedbackBase, undefined);
+  assert.equal(state.state.issues["42"]!.feedbackPending, undefined);
+});
+
+test("holds a comment that arrives during a failed round for the next round", async () => {
+  const { tracker, git, agents, state, factory } = setup([], {
+    verification: { commands: ["npm test"] },
+  });
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  const first = {
+    id: "comment:C_1",
+    author: "kim",
+    body: "Please add a null check.",
+    createdAt: "2026-10-24T09:00:00Z",
+  };
+  tracker.discussions.set(101, { state: "OPEN", feedback: [first] });
+  seedWaiting(state);
+  agents.implementResults = [
+    { sessionId: "impl-2", commits: 1, stdout: "addressed" },
+  ];
+  agents.reviewResults = [
+    { verdict: "approved", summary: "Feedback addressed.", findings: [], commits: 0 },
+  ];
+  agents.verifyResults = [
+    {
+      passed: false,
+      results: [{ command: "npm test", exitCode: 1, output: "boom" }],
+    },
+  ];
+  let moved = false;
+  agents.onVerify = () => {
+    if (!moved) {
+      moved = true;
+      git.head = "2222222222222222";
+    }
+  };
+
+  await factory.runOnce();
+  assert.equal(state.state.issues["42"]!.status, "blocked");
+  assert.deepEqual(state.state.issues["42"]!.feedbackPending, ["comment:C_1"]);
+
+  // A second comment arrives before the first round has been verified.
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      first,
+      {
+        id: "comment:C_2",
+        author: "kim",
+        body: "Also cover the empty input.",
+        createdAt: "2026-10-24T10:00:00Z",
+      },
+    ],
+  });
+  git.commitsSince = 1;
+  agents.implementResults = [{ commits: 0, stdout: "already implemented" }];
+  const requeued = await factory.processIssue(issue(42, ["feature"]));
+  assert.equal(requeued.outcome, "pull-request");
+
+  const resumed = await factory.runOnce();
+
+  // The round still belongs to C_1 only; C_2 was never handed to anyone.
+  assert.equal(resumed[0]!.outcome, "pull-request");
+  assert.equal(agents.reviewCalls.length, 3);
+  assert.deepEqual(state.state.issues["42"]!.addressedFeedback, ["comment:C_1"]);
+  assert.equal(state.state.issues["42"]!.feedbackPending, undefined);
+
+  const next = await factory.runOnce();
+
+  // C_2 opens its own round on the next poll.
+  assert.equal(next[0]!.outcome, "pull-request");
+  assert.equal(agents.implementCalls.length, 3);
+  assert.match(agents.implementCalls[2]!.feedback!.findings[0]!, /empty input/);
+  assert.deepEqual(state.state.issues["42"]!.addressedFeedback, [
+    "comment:C_1",
+    "comment:C_2",
+  ]);
+});
+
+test("blocks a resume when the branch no longer contains the round's base", async () => {
+  const { tracker, git, agents, state, factory } = setup([]);
+  tracker.knownIssues.push(issue(42, ["feature"]));
+  tracker.discussions.set(101, {
+    state: "OPEN",
+    feedback: [
+      {
+        id: "comment:C_1",
+        author: "kim",
+        body: "Please add a null check.",
+        createdAt: "2026-10-24T09:00:00Z",
+      },
+    ],
+  });
+  seedWaiting(state, {
+    feedbackBase: "1111111111111111",
+    feedbackPending: ["comment:C_1"],
+  });
+  git.head = "2222222222222222";
+  // The branch was reset to unrelated history instead of being extended.
+  git.ancestor = false;
+
+  const results = await factory.runOnce();
+
+  assert.equal(results[0]!.outcome, "blocked");
+  assert.match(tracker.blocks[0]!.reason, /no longer contains 1111111111111111/);
+  assert.deepEqual(git.ancestorCalls[0], {
+    ancestor: "1111111111111111",
+    descendant: "softfac/42",
+  });
+  assert.equal(agents.implementCalls.length, 0);
+  assert.equal(agents.reviewCalls.length, 0);
+  assert.deepEqual(git.pushes, []);
 });
 
 test("re-runs the architecture gate after substantial human feedback before pushing", async () => {
